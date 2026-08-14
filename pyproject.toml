@@ -18,6 +18,14 @@ dependencies = [
     "python-multipart==0.0.17",
 ]
 
+[tool.vercel]
+# Explicit, not left to filename auto-detection -- found live that Vercel's
+# newer "backend framework" auto-routing conflicted with a manual
+# vercel.json rewrite we no longer need (see git history). Pointing
+# directly at app.main:app removes any ambiguity about which file Vercel
+# should treat as the entrypoint.
+entrypoint = "app.main:app"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 
