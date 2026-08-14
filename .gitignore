@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets -- real values only ever live in Vercel's dashboard or a local
+# .env, never in git. See .env.example for what's expected.
+.env
+
+# Vercel
+.vercel/
+
+# Supabase local dev (Docker volumes, generated)
+supabase/.branches/
+supabase/.temp/
+
+# OS cruft
+.DS_Store
