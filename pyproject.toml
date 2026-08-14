@@ -1,3 +1,23 @@
+[project]
+# Vercel's Python runtime resolves dependencies with `uv`, which requires a
+# real [project] table here -- requirements.txt alone (this repo's actual
+# source of truth for local `pip install -r requirements.txt`) isn't enough
+# for that specific build path. Keep this list in sync with requirements.txt
+# when either changes; small and stable enough that duplicating it beats the
+# complexity of a dynamic-dependencies setup pointing back at the .txt file.
+name = "task-queue"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi==0.115.5",
+    "uvicorn[standard]==0.32.1",
+    "sqlalchemy==2.0.36",
+    "psycopg[binary]==3.2.13",
+    "httpx==0.28.0",
+    "pydantic-settings==2.6.1",
+    "python-multipart==0.0.17",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 
