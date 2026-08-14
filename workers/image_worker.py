@@ -31,6 +31,8 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "clients"))
 from python_client import TaskQueueClient
 
@@ -58,7 +60,11 @@ def _run_real(character_id: str, task: str, seed: int) -> bytes:
     out_name = f"queue_{uuid.uuid4().hex[:8]}.png"
     cmd = [COMFYUI_ENV_PYTHON, "-m", "forge2.cli", "generate", character_id, task,
           "--seed", str(seed), "--out", out_name]
-    subprocess.run(cmd, cwd=CHARACTER_FORGE_V2_PATH, check=True, timeout=3600)
+    # 7200s, matching forge2's own comfy.timeout_s ceiling (configs/default.yaml)
+    # -- found live: a real render on a loaded Mac took ~2 hours, well past the
+    # 3600s this used to be set to, so the worker gave up before forge2 itself
+    # would have.
+    subprocess.run(cmd, cwd=CHARACTER_FORGE_V2_PATH, check=True, timeout=7200)
     out_path = CHARACTER_FORGE_V2_PATH / "workspace" / character_id / "generated" / out_name
     return out_path.read_bytes()
 
@@ -87,13 +93,34 @@ def main() -> None:
             continue
 
         print(f"claimed {task['id']} (mock={MOCK_MODE})")
+
+        # Two distinct failure modes, found live, that must NOT crash the
+        # worker: (1) the actual work (forge2 render) fails -- report it via
+        # fail_task; (2) reporting a result (success OR failure) itself gets
+        # rejected with a 409 because this task's lease expired mid-render
+        # and someone else already reclaimed/completed it -- nothing to do
+        # but log and move on, the work this worker just did is simply
+        # discarded. Before this fix, case (2) inside the exception handler
+        # for case (1) raised its own uncaught exception and killed the
+        # whole worker process.
         try:
             result = handle_task(client, task)
+        except Exception as e:
+            print(f"work failed for {task['id']}: {e}")
+            try:
+                client.fail_task(task["id"], task["claim_token"], str(e))
+            except httpx.HTTPStatusError as report_err:
+                print(f"could not report failure for {task['id']} (claim likely "
+                     f"expired/reclaimed): {report_err}")
+            continue
+
+        try:
             client.complete_task(task["id"], task["claim_token"], result)
             print(f"completed {task['id']} -> {result}")
-        except Exception as e:
-            client.fail_task(task["id"], task["claim_token"], str(e))
-            print(f"failed {task['id']}: {e}")
+        except httpx.HTTPStatusError as e:
+            print(f"could not report completion for {task['id']} (claim likely "
+                 f"expired/reclaimed -- the work finished but too late, someone "
+                 f"else already took over): {e}")
 
 
 if __name__ == "__main__":
