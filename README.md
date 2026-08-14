@@ -45,8 +45,10 @@ or care which.
 
 ## Stack
 
-FastAPI (deployed to Vercel as a single serverless function -- see
-`vercel.json`/`api/index.py`) + Postgres and Storage via Supabase. Chosen
+FastAPI (deployed to Vercel, which auto-detects `app/main.py`'s `app` and
+routes every request to it directly -- see `[tool.vercel]` in
+`pyproject.toml`; no `vercel.json` needed) + Postgres and Storage via
+Supabase. Chosen
 over a self-hosted VM specifically to avoid babysitting infrastructure for
 what's meant to be genuinely idle most of the time; chosen over Firestore
 specifically because `FOR UPDATE SKIP LOCKED` is a cleaner, more
@@ -109,7 +111,7 @@ app/
   services/task_service.py    -- submit/claim/complete/fail, the queue's core
   services/artifact_service.py
   api/routes.py
-api/index.py, vercel.json     -- Vercel deployment glue, thin re-export of app/main.py
+pyproject.toml's [tool.vercel]  -- points Vercel at app.main:app directly, no separate deploy glue needed
 supabase/migrations/           -- schema, storage bucket, pg_cron cleanup jobs
 clients/python_client.py       -- reusable by both producers and workers
 workers/image_worker.py        -- claims image_generation tasks (mock or real forge2)
