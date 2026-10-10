@@ -27,12 +27,24 @@ def _now() -> datetime:
 def submit_task(db: Session, task_type: str, payload: dict,
                 lease_minutes: int | None = None,
                 retention_hours: int | None = None) -> Task:
+    resolved_lease_minutes = (
+        lease_minutes if lease_minutes is not None else settings.default_lease_minutes
+    )
+    resolved_retention_hours = (
+        retention_hours if retention_hours is not None else settings.default_retention_hours
+    )
+    if resolved_lease_minutes <= 0:
+        raise TaskServiceError("lease_minutes must be greater than zero")
+    if resolved_retention_hours <= 0:
+        raise TaskServiceError("retention_hours must be greater than zero")
+
     task = Task(
         id=str(uuid.uuid4()),
         task_type=task_type,
         payload=payload,
+        lease_minutes=resolved_lease_minutes,
         status="queued",
-        expires_at=_now() + timedelta(hours=retention_hours or settings.default_retention_hours),
+        expires_at=_now() + timedelta(hours=resolved_retention_hours),
     )
     db.add(task)
     db.commit()
@@ -82,19 +94,25 @@ _RECLAIM_SQL = text("""
 # workers polling at the same instant simply cannot claim the same row,
 # by construction, no application-level locking needed.
 _CLAIM_SQL = text("""
-    UPDATE tasks
-    SET status = 'claimed', claimed_by = :worker_id, claim_token = :claim_token,
-        claimed_at = :now, lease_expires_at = :lease_expires_at
-    WHERE id = (
-        SELECT id FROM tasks
+    WITH candidate AS (
+        SELECT id, lease_minutes FROM tasks
         WHERE status = 'queued' AND task_type = ANY(:task_types)
         ORDER BY created_at
         FOR UPDATE SKIP LOCKED
         LIMIT 1
     )
-    RETURNING id, task_type, payload, status, result, error, claimed_by,
-              claim_token, created_at, claimed_at, lease_expires_at,
-              completed_at, expires_at
+    UPDATE tasks AS task
+    SET status = 'claimed', claimed_by = :worker_id, claim_token = :claim_token,
+        claimed_at = :now,
+        lease_expires_at = :now + make_interval(
+            mins => COALESCE(CAST(:lease_minutes AS integer), candidate.lease_minutes)
+        )
+    FROM candidate
+    WHERE task.id = candidate.id
+    RETURNING task.id, task.task_type, task.payload, task.lease_minutes,
+              task.status, task.result, task.error, task.claimed_by,
+              task.claim_token, task.created_at, task.claimed_at,
+              task.lease_expires_at, task.completed_at, task.expires_at
 """)
 
 
@@ -103,16 +121,18 @@ def claim_next(db: Session, task_types: list[str], worker_id: str,
     """Returns a dict (not an ORM Task -- this is a raw claimed snapshot,
     including claim_token which the worker must present to complete/fail)
     or None if nothing queued matches task_types."""
+    if lease_minutes is not None and lease_minutes <= 0:
+        raise TaskServiceError("lease_minutes must be greater than zero")
+
     now = _now()
     db.execute(_RECLAIM_SQL, {"task_types": task_types, "now": now})
 
     claim_token = str(uuid.uuid4())
-    lease_expires_at = now + timedelta(minutes=lease_minutes or settings.default_lease_minutes)
     row = db.execute(_CLAIM_SQL, {
         "worker_id": worker_id,
         "claim_token": claim_token,
         "now": now,
-        "lease_expires_at": lease_expires_at,
+        "lease_minutes": lease_minutes,
         "task_types": task_types,
     }).mappings().first()
     db.commit()

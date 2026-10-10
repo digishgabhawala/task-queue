@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 
 import pytest
 
@@ -10,7 +11,23 @@ def test_submit_task_creates_queued_task(db_session):
     assert task.status == "queued"
     assert task.task_type == "text_generation"
     assert task.payload == {"prompt": "hello"}
+    assert task.lease_minutes == 60
     assert task.expires_at is not None
+
+
+def test_submit_task_persists_custom_lease(db_session):
+    task = tsvc.submit_task(
+        db_session, "image_generation", {"seed": 42}, lease_minutes=240
+    )
+
+    assert task.lease_minutes == 240
+
+
+def test_submit_task_rejects_non_positive_lease(db_session):
+    with pytest.raises(tsvc.TaskServiceError, match="lease_minutes"):
+        tsvc.submit_task(
+            db_session, "image_generation", {"seed": 42}, lease_minutes=0
+        )
 
 
 def test_claim_next_returns_none_when_nothing_queued(db_session):
@@ -25,6 +42,30 @@ def test_claim_next_claims_matching_task_type(db_session):
     assert claimed["status"] == "claimed"
     assert claimed["claimed_by"] == "worker-1"
     assert claimed["claim_token"]
+
+
+def test_claim_uses_the_lease_persisted_at_submission(db_session):
+    tsvc.submit_task(
+        db_session, "image_generation", {"seed": 42}, lease_minutes=240
+    )
+
+    claimed = tsvc.claim_next(db_session, ["image_generation"], "worker-1")
+
+    assert claimed["lease_minutes"] == 240
+    assert claimed["lease_expires_at"] - claimed["claimed_at"] == timedelta(minutes=240)
+
+
+def test_claim_can_explicitly_override_the_persisted_lease(db_session):
+    tsvc.submit_task(
+        db_session, "image_generation", {"seed": 42}, lease_minutes=240
+    )
+
+    claimed = tsvc.claim_next(
+        db_session, ["image_generation"], "worker-1", lease_minutes=15
+    )
+
+    assert claimed["lease_minutes"] == 240
+    assert claimed["lease_expires_at"] - claimed["claimed_at"] == timedelta(minutes=15)
 
 
 def test_claim_next_ignores_non_matching_task_type(db_session):
@@ -79,8 +120,9 @@ def test_fail_task_with_correct_token(db_session):
 
 def test_expired_lease_is_reclaimed(db_session):
     task = tsvc.submit_task(db_session, "image_generation", {"seed": 1})
-    # negative lease -> already expired the instant it's claimed
-    tsvc.claim_next(db_session, ["image_generation"], "worker-1", lease_minutes=-1)
+    tsvc.claim_next(db_session, ["image_generation"], "worker-1")
+    task.lease_expires_at = tsvc._now() - timedelta(minutes=1)
+    db_session.commit()
     reclaimed = tsvc.claim_next(db_session, ["image_generation"], "worker-2")
     assert reclaimed is not None
     assert reclaimed["id"] == task.id
@@ -92,7 +134,9 @@ def test_completing_after_reclaim_with_stale_token_fails(db_session):
     has been reclaimed by someone else -- this is exactly what claim_token
     verification exists to prevent."""
     task = tsvc.submit_task(db_session, "image_generation", {"seed": 1})
-    stale_claim = tsvc.claim_next(db_session, ["image_generation"], "worker-1", lease_minutes=-1)
+    stale_claim = tsvc.claim_next(db_session, ["image_generation"], "worker-1")
+    task.lease_expires_at = tsvc._now() - timedelta(minutes=1)
+    db_session.commit()
     tsvc.claim_next(db_session, ["image_generation"], "worker-2")  # reclaims it
 
     with pytest.raises(tsvc.TaskServiceError):

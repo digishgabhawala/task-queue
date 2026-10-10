@@ -20,6 +20,7 @@ def _serialize_task(task: Task) -> dict:
         "id": task.id,
         "task_type": task.task_type,
         "payload": task.payload,
+        "lease_minutes": task.lease_minutes,
         "status": task.status,
         "result": task.result,
         "error": task.error,
@@ -61,7 +62,8 @@ def list_tasks(status: str | None = None, task_type: str | None = None, db: Sess
 
 @router.get("/tasks/next")
 def claim_next(task_types: str = Query(..., description="comma-separated task_type list"),
-              worker_id: str | None = None, lease_minutes: int | None = None,
+              worker_id: str | None = None,
+              lease_minutes: int | None = Query(None, gt=0),
               db: Session = Depends(get_db)):
     claimed = tsvc.claim_next(db, task_types.split(","), worker_id or f"worker-{uuid.uuid4().hex[:8]}",
                               lease_minutes)

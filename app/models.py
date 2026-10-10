@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Column, DateTime, String, Text
+from sqlalchemy import BigInteger, Column, DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from .db import Base
@@ -21,6 +21,9 @@ class Task(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     task_type = Column(String, nullable=False, index=True)
     payload = Column(JSONB, nullable=False)
+    # Producer-selected claim duration. Workers normally honor this value;
+    # claim_next() retains an explicit override for worker-specific cases.
+    lease_minutes = Column(Integer, nullable=False)
 
     # queued -> claimed -> done | failed
     status = Column(String, nullable=False, default="queued", index=True)
