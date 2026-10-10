@@ -33,7 +33,10 @@ or care which.
 - **Lease/reclaim without a background process.** A claimed task past its
   `lease_expires_at` gets reset to `queued` lazily, right before the next
   claim attempt -- no scheduler needed, since nobody needs it reclaimed
-  until someone else actually wants work of that type.
+  until someone else actually wants work of that type. Producers can set
+  `lease_minutes` when submitting long-running work; that value is persisted
+  with the task and applied when a worker later claims it. A worker may pass
+  an explicit claim-time override when it needs different lease semantics.
 - **Cleanup via Postgres itself, not application code.** `pg_cron` runs
   `DELETE ... WHERE expires_at < now()` on a schedule (see
   `supabase/migrations/`) -- no cron job to host, no sweep endpoint to call.

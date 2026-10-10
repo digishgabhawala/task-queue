@@ -14,7 +14,9 @@ stack), not a mock or in-memory stand-in -- specifically so the
 `FOR UPDATE SKIP LOCKED` claim logic in `task_service.claim_next()` gets
 genuinely exercised: two sequential claims against one queued task, claim
 after an expired lease gets reclaimed, a stale `claim_token` from a
-reclaimed task correctly fails to complete/fail. `test_artifact_service.py`
+reclaimed task correctly fails to complete/fail, and a producer-requested
+lease is persisted and applied when a worker later claims the task.
+`test_artifact_service.py`
 uploads/downloads real bytes through the local Supabase Storage API.
 
 **What automated tests don't cover yet**: the HTTP routes themselves
@@ -28,7 +30,7 @@ loop specifically) is verified live instead, see below.
 - [x] Schema migration applies cleanly on a fresh `supabase start` --
       confirmed: `tasks`/`artifacts` tables, indexes, the `artifacts`
       storage bucket, and both `pg_cron` cleanup jobs all present.
-- [x] Full pytest suite (19 cases) passing against local Postgres
+- [x] Full pytest suite (23 cases) passing against local Postgres
 - [x] End-to-end via HTTP, local stack: submit an `image_generation` task,
       run `image_worker.py` in `MOCK_MODE`, confirm it claims, completes,
       and the resulting artifact is byte-identical to
