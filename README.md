@@ -222,6 +222,8 @@ at or below 60 seconds with the current two-minute offline threshold.
 - [ ] Add authentication for producer, worker, and admin endpoints before
   this becomes a multi-user or externally shared service. Deliberately
   deferred for the current single-user phase.
+- [ ] Resume the [Future MVP UI backlog](docs/future-ui-mvp.md) after login,
+  authorization, and user management are available.
 - [ ] Define retention or manual cleanup for historical worker registrations;
   disappeared workers currently remain visible as offline history.
 - [x] Add automated FastAPI route tests for registration, heartbeat, worker
