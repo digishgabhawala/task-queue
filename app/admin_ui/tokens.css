@@ -1,0 +1,199 @@
+/**
+ * AI Bharatiyaa design tokens v0.2
+ *
+ * Consume semantic tokens in application code. Palette primitives are an
+ * implementation detail and may change while semantic roles remain stable.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Typography */
+  --font-family-display: "Anek Latin", "Noto Sans", ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-family-body: "Noto Sans", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo,
+    monospace;
+
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+  --font-size-3xl: 2rem;
+  --font-size-4xl: 2.5rem;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.2;
+  --line-height-heading: 1.3;
+  --line-height-body: 1.5;
+  --line-height-relaxed: 1.7;
+
+  /* Neutral palette primitives */
+  --palette-neutral-0: #ffffff;
+  --palette-neutral-25: #fcfcfd;
+  --palette-neutral-50: #f7f8fa;
+  --palette-neutral-100: #eef0f4;
+  --palette-neutral-200: #dfe3ea;
+  --palette-neutral-300: #c8ced8;
+  --palette-neutral-400: #97a0af;
+  --palette-neutral-500: #667085;
+  --palette-neutral-600: #475467;
+  --palette-neutral-700: #344054;
+  --palette-neutral-800: #1d2939;
+  --palette-neutral-900: #101828;
+  --palette-neutral-950: #0b1220;
+
+  /* Indigo palette primitives */
+  --palette-brand-50: #f2f4ff;
+  --palette-brand-100: #e4e7ff;
+  --palette-brand-200: #cbd0ff;
+  --palette-brand-300: #a5adff;
+  --palette-brand-400: #7c83f5;
+  --palette-brand-500: #5d5cde;
+  --palette-brand-600: #4946c7;
+  --palette-brand-700: #3d3aa5;
+  --palette-brand-800: #353486;
+  --palette-brand-900: #30316b;
+
+  /* Semantic surfaces and text */
+  --color-canvas: var(--palette-neutral-50);
+  --color-surface: var(--palette-neutral-0);
+  --color-surface-subtle: var(--palette-neutral-100);
+  --color-surface-hover: var(--palette-neutral-50);
+  --color-surface-selected: var(--palette-brand-50);
+  --color-surface-disabled: var(--palette-neutral-100);
+  --color-surface-inverse: var(--palette-neutral-950);
+  --color-backdrop: rgb(11 18 32 / 64%);
+  --color-text-strong: var(--palette-neutral-900);
+  --color-text: var(--palette-neutral-700);
+  --color-text-muted: var(--palette-neutral-500);
+  --color-text-disabled: var(--palette-neutral-500);
+  --color-text-inverse: var(--palette-neutral-0);
+  --color-border: var(--palette-neutral-200);
+  --color-border-strong: var(--palette-neutral-300);
+
+  /* Actions and application identity */
+  --color-action: var(--palette-brand-600);
+  --color-action-hover: var(--palette-brand-700);
+  --color-action-active: var(--palette-brand-800);
+  --color-action-subtle: var(--palette-brand-50);
+  --color-action-disabled: var(--palette-neutral-200);
+  --color-text-on-action: var(--palette-neutral-0);
+  --color-text-on-action-disabled: var(--palette-neutral-500);
+  --color-focus: var(--palette-brand-600);
+  --color-app-accent: var(--color-action);
+  --color-text-on-app-accent: var(--color-text-on-action);
+
+  /* Semantic status pairs */
+  --color-info: #175cd3;
+  --color-info-surface: #eff8ff;
+  --color-info-border: #b2ddff;
+  --color-success: #067647;
+  --color-success-surface: #ecfdf3;
+  --color-success-border: #abefc6;
+  --color-success-on-inverse: #32d583;
+  --color-warning: #93370d;
+  --color-warning-surface: #fffaeb;
+  --color-warning-border: #fedf89;
+  --color-danger: #b42318;
+  --color-danger-surface: #fef3f2;
+  --color-danger-border: #fecdca;
+
+  /* Form fields */
+  --color-field-background: var(--color-surface);
+  --color-field-border: var(--color-border-strong);
+  --color-field-border-hover: var(--palette-neutral-400);
+  --color-field-border-focus: var(--color-focus);
+  --color-field-border-invalid: var(--color-danger);
+  --color-field-placeholder: var(--color-text-muted);
+  --color-field-disabled: var(--color-surface-disabled);
+
+  /* Spacing: 4px base */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* Shape */
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 1rem;
+  --radius-pill: 999px;
+
+  /* Elevation */
+  --shadow-raised: 0 1px 2px rgb(16 24 40 / 6%),
+    0 4px 12px rgb(16 24 40 / 6%);
+  --shadow-overlay: 0 12px 32px rgb(16 24 40 / 18%);
+
+  /* Controls and focus */
+  --control-height-sm: 2.25rem;
+  --control-height-md: 2.75rem;
+  --control-height-lg: 3rem;
+  --control-height-current: var(--control-height-md);
+  --control-padding-inline: var(--space-4);
+  --control-gap: var(--space-2);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --focus-ring-shadow: 0 0 0 var(--focus-ring-width) var(--color-focus);
+
+  /* Icons */
+  --icon-size-sm: 1rem;
+  --icon-size-md: 1.25rem;
+  --icon-size-lg: 1.5rem;
+
+  /* Motion */
+  --duration-instant: 80ms;
+  --duration-fast: 140ms;
+  --duration-standard: 200ms;
+  --duration-deliberate: 280ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Layout */
+  --content-reading: 46rem;
+  --content-standard: 75rem;
+  --content-wide: 90rem;
+  --page-gutter: clamp(1.25rem, 4vw, 3rem);
+  --section-gap: clamp(4rem, 9vw, 8rem);
+  --app-header-height: 4.5rem;
+  --app-sidebar-width: 14rem;
+
+  /* Layering */
+  --layer-base: 0;
+  --layer-sticky: 10;
+  --layer-dropdown: 20;
+  --layer-overlay: 30;
+  --layer-toast: 40;
+}
+
+[data-density="compact"] {
+  --control-height-current: var(--control-height-sm);
+  --control-padding-inline: var(--space-3);
+  --control-gap: var(--space-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0ms;
+    --duration-fast: 0ms;
+    --duration-standard: 0ms;
+    --duration-deliberate: 0ms;
+  }
+}

@@ -6,8 +6,13 @@
 supabase start
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/ruff check .
+python3 scripts/validate_admin_ui.py
 .venv/bin/pytest tests/ -v
 ```
+
+The UI validator is deliberately dependency-free. It catches undefined design
+tokens, raw colors that bypass the shared token layer, broken ARIA references,
+duplicate IDs, missing local assets, and basic document metadata mistakes.
 
 `tests/` runs against a **real local Postgres** (`supabase start`'s Docker
 stack), not a mock or in-memory stand-in -- specifically so the
@@ -94,6 +99,10 @@ pytest tests/workers` (nothing connects to them).
       its `last_heartbeat_at` advanced after a full one-minute interval.
 - [x] Deployed `/admin`, `/api/workers`, and task progress serialization
       verified against the Vercel production URL.
+- [x] Refreshed `/admin` foundation checked locally at desktop, tablet, and
+      mobile widths with representative, empty, loading, partial-failure, and
+      stale-data states. API responses were intercepted during visual QA, so
+      the hosted database was not read or changed.
 
 (Checkboxes get filled in as each is actually run -- this file tracks
 reality, not aspiration.)
