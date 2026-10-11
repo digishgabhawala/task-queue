@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Column, DateTime, Integer, String, Text
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from .db import Base
@@ -38,10 +38,37 @@ class Task(Base):
     claimed_at = Column(DateTime(timezone=True), nullable=True)
     lease_expires_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    progress_stage = Column(String, nullable=True)
+    progress_message = Column(Text, nullable=True)
+    progress_current = Column(Integer, nullable=True)
+    progress_total = Column(Integer, nullable=True)
+    progress_updated_at = Column(DateTime(timezone=True), nullable=True)
     # Row is eligible for deletion by the pg_cron cleanup job once past this
     # (see supabase/migrations) -- set at submission time so even a task
     # that's never claimed still gets swept eventually.
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class Worker(Base):
+    """A registered worker installation and its most recent live session.
+
+    Online/offline is derived from last_heartbeat_at at read time. Keeping the
+    row when a worker disappears gives the admin UI useful history without a
+    scheduler that continually flips stored status flags.
+    """
+    __tablename__ = "workers"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    session_id = Column(String, nullable=False)
+    capabilities = Column(JSONB, nullable=False, default=dict)
+    version = Column(String, nullable=True)
+    state = Column(String, nullable=False, default="idle")
+    current_task_id = Column(
+        UUID(as_uuid=False), ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)
+    registered_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    session_started_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    last_heartbeat_at = Column(DateTime(timezone=True), default=_now, nullable=False, index=True)
 
 
 class Artifact(Base):

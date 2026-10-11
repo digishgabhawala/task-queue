@@ -45,6 +45,12 @@ or care which.
   `POST /tasks/{id}/complete` then just references that id in its (still
   always-JSON) `result`. Keeps task completion uniform regardless of
   whether a given task type produces text or binary output.
+- **Workers register and heartbeat through the hosted queue.** A worker
+  registers its stable identity and capabilities when it starts, then sends
+  a heartbeat once per minute. The admin API/UI considers it offline after
+  two minutes without a heartbeat. Busy heartbeats also renew a short rolling
+  task lease and report coarse phases such as preparing, rendering, and
+  uploading. Exact ComfyUI sampling progress is intentionally out of scope.
 
 ## Stack
 
@@ -80,6 +86,11 @@ python3 -m venv .venv
 values (same connection string/keys on every machine) -- no `.env` needed
 for local dev. See `.env.example` for what a real deployment overrides.
 
+The admin dashboard is available at `/admin` (for example,
+`http://127.0.0.1:8000/admin`). It shows registered workers, derived
+online/offline state, capabilities, current work, heartbeat recency, recent
+tasks, and coarse progress.
+
 ## Trying it end to end (image generation)
 
 ```bash
@@ -108,13 +119,24 @@ ComfyUI, see that repo's README) to exercise a real render instead of the
 instant mock path. The worker forwards the task's explicit `profile` to
 forge2 and defaults older payloads without that field to `full`.
 
+Worker environment options:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WORKER_ID` | `image-worker-<hostname>` | Stable registration identity |
+| `WORKER_NAME` | local hostname | Human-readable admin UI label |
+| `HEARTBEAT_SECONDS` | `60` | Hosted heartbeat interval |
+| `POLL_SECONDS` | `3` | Delay between empty claim attempts |
+
 ## Project layout
 
 ```
 app/
   main.py, config.py, db.py, models.py, schemas.py, storage.py
   services/task_service.py    -- submit/claim/complete/fail, the queue's core
+  services/worker_service.py  -- registration, heartbeat, progress, lease renewal
   services/artifact_service.py
+  admin.py                    -- same-origin, read-only admin dashboard
   api/routes.py
 pyproject.toml's [tool.vercel]  -- points Vercel at app.main:app directly, no separate deploy glue needed
 supabase/migrations/           -- schema, storage bucket, pg_cron cleanup jobs
