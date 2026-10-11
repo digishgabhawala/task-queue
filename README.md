@@ -91,6 +91,9 @@ The admin dashboard is available at `/admin` (for example,
 online/offline state, capabilities, current work, heartbeat recency, recent
 tasks, and coarse progress.
 
+The deployed dashboard is:
+[`https://task-queue-eight.vercel.app/admin`](https://task-queue-eight.vercel.app/admin).
+
 ## Trying it end to end (image generation)
 
 ```bash
@@ -127,6 +130,33 @@ Worker environment options:
 | `WORKER_NAME` | local hostname | Human-readable admin UI label |
 | `HEARTBEAT_SECONDS` | `60` | Hosted heartbeat interval |
 | `POLL_SECONDS` | `3` | Delay between empty claim attempts |
+
+`workers/image_worker.py` loads the repository's `.env` automatically.
+Values supplied by the launching shell take precedence. Keep the heartbeat
+at or below 60 seconds with the current two-minute offline threshold.
+
+## Implementation TODO
+
+- [x] Persist stable worker registrations and per-process session IDs.
+- [x] Send one-minute worker heartbeats and derive offline status after two
+  minutes without one.
+- [x] Renew a short rolling task lease while a worker is actively processing
+  a claimed task.
+- [x] Report coarse task phases (`claimed`, `preparing`, `rendering`,
+  `uploading`, and terminal state).
+- [x] Provide a deployed, read-only admin dashboard for workers and tasks.
+- [ ] Add authentication for producer, worker, and admin endpoints before
+  this becomes a multi-user or externally shared service. Deliberately
+  deferred for the current single-user phase.
+- [ ] Define retention or manual cleanup for historical worker registrations;
+  disappeared workers currently remain visible as offline history.
+- [ ] Add automated FastAPI route tests for registration, heartbeat, worker
+  listing, and the admin page. Service tests and live hosted checks exist.
+- [ ] Rerun the current 31-test Postgres/Storage suite when the local Supabase
+  stack is next started; it remains stopped to preserve image-rendering RAM.
+
+Exact ComfyUI sampling-step extraction and worker controls such as
+pause/drain/shutdown are intentionally not part of the current scope.
 
 ## Project layout
 
