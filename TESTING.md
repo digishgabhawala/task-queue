@@ -27,19 +27,30 @@ loop specifically) is verified live instead, see below.
 
 The worker-registration additions have service tests for registration,
 session replacement, heartbeat-based progress/lease renewal, claim ownership,
-and the two-minute offline calculation. While the local Supabase stack was
-intentionally stopped to free RAM for image rendering, the new worker unit
-checks and lint passed; rerunning the complete Postgres-backed suite remains
-pending the next time the local stack is started.
+and the two-minute offline calculation, plus FastAPI route tests
+(`tests/test_worker_routes.py`) for registration, heartbeat (incl. `details`
+and its 4 KB limit), worker listing and the admin page.
+
+**Run tests against the local stack only.** `.env` may point at the hosted
+project; `tests/conftest.py` refuses to run unless `DATABASE_URL` and
+`SUPABASE_URL` are local. Override them on the command line, e.g.
+`DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres
+SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_SERVICE_KEY=<local key> pytest tests/`.
 
 ## Verified live
 
 - [x] Schema migration applies cleanly on a fresh `supabase start` --
       confirmed: `tasks`/`artifacts` tables, indexes, the `artifacts`
       storage bucket, and both `pg_cron` cleanup jobs all present.
-- [x] The then-current 23-test pytest suite passed against local Postgres.
-      The suite now contains 31 tests; its next complete run is pending the
-      next time the RAM-heavy local Supabase stack is started.
+- [x] Full suite (43 tests) passed against local Postgres/Storage on
+      2026-10-11, after applying all migrations locally.
+- [x] Hosted worker status end to end, local stack, mock worker with
+      `MOCK_DELAY_SECONDS=150` (2026-10-11): linkedin-content-agent's badge
+      went online -> busy -> offline ~2 min after a SIGKILL; the claimed post
+      showed `is_worker_lost` once the 5-min rolling lease expired; a
+      restarted worker reclaimed and completed the task (`image_ready`); with
+      the queue stopped the badge read "Task queue unreachable" and posts
+      still loaded.
 - [x] End-to-end via HTTP, local stack: submit an `image_generation` task,
       run `image_worker.py` in `MOCK_MODE`, confirm it claims, completes,
       and the resulting artifact is byte-identical to
