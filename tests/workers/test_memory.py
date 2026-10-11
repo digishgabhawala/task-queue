@@ -84,3 +84,8 @@ def test_memory_details_survives_measurement_failure(monkeypatch):
 @pytest.fixture(autouse=True)
 def _no_env_leak(monkeypatch):
     monkeypatch.delenv("MEMORY_REQUIRED_FULL_GB", raising=False)
+
+
+def test_bad_memory_setting_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("MEMORY_REQUIRED_FULL_GB", "fourteen")
+    assert memory.required_gb("full") == 14.0
