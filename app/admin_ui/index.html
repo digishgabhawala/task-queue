@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Task Queue Admin</title>
+  <link rel="stylesheet" href="/admin-assets/admin.css">
+  <script src="/admin-assets/admin.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Task Queue</h1>
+        <div class="muted">Workers and recent activity</div>
+      </div>
+      <div id="updated" class="muted">Loading…</div>
+    </header>
+    <section class="cards">
+      <div class="card"><div class="muted">Workers online</div><div class="number" id="online">–</div></div>
+      <div class="card"><div class="muted">Workers busy</div><div class="number" id="busy">–</div></div>
+      <div class="card"><div class="muted">Tasks queued</div><div class="number" id="queued">–</div></div>
+      <div class="card"><div class="muted">Tasks running</div><div class="number" id="running">–</div></div>
+    </section>
+    <section class="panel"><h2>Registered workers</h2><div id="workers"></div></section>
+    <section class="panel"><h2>Recent tasks</h2><div id="tasks"></div></section>
+  </main>
+</body>
+</html>
