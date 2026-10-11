@@ -264,17 +264,24 @@ class ComfyUISupervisor:
         if not self._lock.acquire(blocking=False):
             return {"state": self._state, "managed": self.managed}
         try:
-            if not self._busy and self._state in ("ready", "stopped"):
+            if self._busy:
+                # No HTTP probe mid-render: a loading 20B model can make
+                # ComfyUI slow to answer (false "stopped"). Our own child's
+                # exit status is a local, reliable signal instead.
+                if self._proc is not None and not self._child_alive():
+                    self._proc = None
+                    self.pid_path.unlink(missing_ok=True)
+                    self._state = "stopped"
+            elif self._state in ("ready", "stopped", "failed"):
                 healthy = self._health(self.url)
                 if healthy:
                     self._adopt_orphan()
-                if self._state == "ready" and not healthy:
+                    self._state = "ready"  # incl. a ComfyUI started by hand
+                elif self._state == "ready":
                     if self._proc is not None and not self._child_alive():
                         self._proc = None
                         self.pid_path.unlink(missing_ok=True)
                     self._state = "stopped"
-                elif self._state == "stopped" and healthy:
-                    self._state = "ready"  # e.g. a user-started ComfyUI
             return {"state": self._state, "managed": self.managed}
         finally:
             self._lock.release()
