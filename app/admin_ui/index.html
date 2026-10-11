@@ -11,20 +11,56 @@
   <link href="https://fonts.googleapis.com/css2?family=Anek+Latin:wdth,wght@75..125,400..700&amp;family=Noto+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/admin-assets/tokens.css">
   <link rel="stylesheet" href="/admin-assets/admin.css">
+  <script
+    src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"
+    integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R"
+    crossorigin="anonymous"
+    defer
+  ></script>
   <script src="/admin-assets/admin.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to queue overview</a>
+  <a id="skip-link" class="skip-link" href="#main" hidden>Skip to queue overview</a>
 
   <header class="suite-bar">
     <a class="suite-brand" href="/admin" aria-label="Task Queue admin home">
       <span class="suite-mark" aria-hidden="true">ai</span>
       <span translate="no">AI Bharatiyaa</span>
     </a>
-    <span class="read-only-label">Read-only admin</span>
+    <div class="suite-actions">
+      <span class="read-only-label">Read-only admin</span>
+      <div id="account" class="account" hidden>
+        <span id="account-email" class="account-email"></span>
+        <button id="sign-out" class="quiet-button" type="button">Sign out</button>
+      </div>
+    </div>
   </header>
 
-  <main id="main" class="page-shell">
+  <main id="auth-shell" class="auth-shell" aria-labelledby="auth-title">
+    <section class="auth-card">
+      <p class="product-context">AI Bharatiyaa account</p>
+      <h1 id="auth-title">Sign in to Task Queue</h1>
+      <p class="auth-summary">Use the administrator account created in Supabase to view workers and recent queue activity.</p>
+
+      <form id="sign-in-form" class="auth-form">
+        <div class="field">
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" autocomplete="username" inputmode="email" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <p id="auth-error" class="auth-message is-error" role="alert" hidden></p>
+        <p id="auth-status" class="auth-message" role="status" aria-live="polite">Checking your session…</p>
+        <button id="sign-in" class="primary-button" type="submit" disabled>Sign in</button>
+      </form>
+
+      <p class="auth-footnote">Access is invitation-only. Task workers use separate credentials and do not sign in here.</p>
+    </section>
+  </main>
+
+  <main id="main" class="page-shell" hidden>
     <section class="page-heading" aria-labelledby="page-title">
       <div>
         <p class="product-context">Distributed compute</p>

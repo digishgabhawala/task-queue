@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFi
 from sqlalchemy.orm import Session
 
 from .. import storage
+from ..auth import AuthUser, public_auth_config, require_admin
 from ..db import get_db
 from ..models import Artifact, Task, Worker
 from ..schemas import (
@@ -78,6 +79,21 @@ def health():
     return {"status": "ok"}
 
 
+@router.get("/auth/config", include_in_schema=False)
+def auth_config():
+    return public_auth_config()
+
+
+@router.get("/auth/me", include_in_schema=False)
+def auth_me(user: AuthUser = Depends(require_admin)):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "avatar_url": user.avatar_url,
+    }
+
+
 @router.post("/workers/register")
 def register_worker(req: WorkerRegisterRequest, db: Session = Depends(get_db)):
     worker = wsvc.register_worker(
@@ -114,7 +130,10 @@ def worker_heartbeat(worker_id: str, req: WorkerHeartbeatRequest,
 
 
 @router.get("/workers")
-def list_workers(db: Session = Depends(get_db)):
+def list_workers(
+    db: Session = Depends(get_db),
+    _admin: AuthUser = Depends(require_admin),
+):
     return [_serialize_worker(w) for w in wsvc.list_workers(db)]
 
 
@@ -125,7 +144,12 @@ def submit_task(req: TaskSubmitRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/tasks")
-def list_tasks(status: str | None = None, task_type: str | None = None, db: Session = Depends(get_db)):
+def list_tasks(
+    status: str | None = None,
+    task_type: str | None = None,
+    db: Session = Depends(get_db),
+    _admin: AuthUser = Depends(require_admin),
+):
     return [_serialize_task(t) for t in tsvc.list_tasks(db, status, task_type)]
 
 

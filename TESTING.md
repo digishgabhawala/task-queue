@@ -14,6 +14,12 @@ The UI validator is deliberately dependency-free. It catches undefined design
 tokens, raw colors that bypass the shared token layer, broken ARIA references,
 duplicate IDs, missing local assets, and basic document metadata mistakes.
 
+Authentication tests cover missing bearer credentials, administrator
+allow-list enforcement, safe public configuration, and the absence of the
+server-only service key from browser configuration. Hosted activation and
+email/password login are verified with the checklist in
+[`docs/authentication.md`](docs/authentication.md).
+
 `tests/` runs against a **real local Postgres** (`supabase start`'s Docker
 stack), not a mock or in-memory stand-in -- specifically so the
 `FOR UPDATE SKIP LOCKED` claim logic in `task_service.claim_next()` gets

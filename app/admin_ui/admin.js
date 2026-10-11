@@ -1,18 +1,30 @@
 const REFRESH_INTERVAL_MS = 15000;
 
 const elements = {
+  account: document.querySelector('#account'),
+  accountEmail: document.querySelector('#account-email'),
   attention: document.querySelector('#attention'),
   attentionMessage: document.querySelector('#attention-message'),
+  authError: document.querySelector('#auth-error'),
+  authShell: document.querySelector('#auth-shell'),
+  authStatus: document.querySelector('#auth-status'),
   busy: document.querySelector('#busy'),
   busyNote: document.querySelector('#busy-note'),
   connection: document.querySelector('#connection-summary'),
+  email: document.querySelector('#email'),
+  main: document.querySelector('#main'),
   online: document.querySelector('#online'),
   onlineNote: document.querySelector('#online-note'),
+  password: document.querySelector('#password'),
   queued: document.querySelector('#queued'),
   queuedNote: document.querySelector('#queued-note'),
   refresh: document.querySelector('#refresh'),
   running: document.querySelector('#running'),
   runningNote: document.querySelector('#running-note'),
+  signIn: document.querySelector('#sign-in'),
+  signInForm: document.querySelector('#sign-in-form'),
+  signOut: document.querySelector('#sign-out'),
+  skipLink: document.querySelector('#skip-link'),
   tasks: document.querySelector('#tasks'),
   tasksCount: document.querySelector('#tasks-count'),
   tasksMessage: document.querySelector('#tasks-message'),
@@ -28,6 +40,9 @@ const resources = {
 };
 
 let refreshInProgress = false;
+let accessToken = null;
+let authClient = null;
+let dashboardStarted = false;
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
   '&': '&amp;',
@@ -199,7 +214,9 @@ const unavailableState = (container, noun) => {
 };
 
 const fetchJson = async endpoint => {
-  const response = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+  const headers = { Accept: 'application/json' };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const response = await fetch(endpoint, { headers });
   if (!response.ok) throw new Error(`${endpoint} returned ${response.status}`);
   const data = await response.json();
   if (!Array.isArray(data)) throw new Error(`${endpoint} returned an unexpected response`);
@@ -300,7 +317,7 @@ const setConnectionState = (workersOk, tasksOk) => {
 };
 
 const refresh = async () => {
-  if (refreshInProgress) return;
+  if (refreshInProgress || elements.main.hidden) return;
   refreshInProgress = true;
   elements.refresh.disabled = true;
   elements.refresh.classList.add('is-refreshing');
@@ -321,7 +338,159 @@ const refresh = async () => {
 };
 
 elements.refresh.addEventListener('click', refresh);
-refresh();
+const setAuthError = message => {
+  elements.authError.hidden = !message;
+  elements.authError.textContent = message || '';
+};
+
+const setAuthStatus = message => {
+  elements.authStatus.hidden = !message;
+  elements.authStatus.textContent = message || '';
+};
+
+const resetDashboard = () => {
+  dashboardStarted = false;
+  Object.values(resources).forEach(resource => {
+    resource.data = null;
+    resource.error = null;
+    resource.updatedAt = null;
+  });
+};
+
+const showSignIn = (message = '') => {
+  accessToken = null;
+  resetDashboard();
+  elements.main.hidden = true;
+  elements.skipLink.hidden = true;
+  elements.account.hidden = true;
+  elements.authShell.hidden = false;
+  elements.signIn.disabled = !authClient;
+  setAuthStatus('');
+  setAuthError(message);
+  if (authClient) elements.email.focus();
+};
+
+const showDashboard = user => {
+  elements.authShell.hidden = true;
+  elements.main.hidden = false;
+  elements.skipLink.hidden = false;
+  if (user) {
+    elements.accountEmail.textContent = user.email;
+    elements.account.hidden = false;
+  } else {
+    elements.account.hidden = true;
+  }
+  if (!dashboardStarted) {
+    dashboardStarted = true;
+    refresh();
+  }
+};
+
+const verifyAdminSession = async session => {
+  if (!session?.access_token) {
+    showSignIn();
+    return;
+  }
+
+  accessToken = session.access_token;
+  setAuthError('');
+  setAuthStatus('Confirming access…');
+  try {
+    const response = await fetch('/api/auth/me', {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    if (response.status === 403) {
+      await authClient.auth.signOut();
+      showSignIn('This account does not have Task Queue admin access.');
+      return;
+    }
+    if (!response.ok) {
+      await authClient.auth.signOut({ scope: 'local' });
+      showSignIn('Your session could not be verified. Please sign in again.');
+      return;
+    }
+    showDashboard(await response.json());
+  } catch (error) {
+    showSignIn('The identity service is unavailable. Please try again.');
+  }
+};
+
+elements.signInForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!authClient) return;
+
+  elements.signIn.disabled = true;
+  setAuthError('');
+  setAuthStatus('Signing in…');
+  const form = new FormData(elements.signInForm);
+  try {
+    const { data, error } = await authClient.auth.signInWithPassword({
+      email: String(form.get('email') || '').trim(),
+      password: String(form.get('password') || ''),
+    });
+    if (error) {
+      setAuthStatus('');
+      setAuthError('Email or password is incorrect.');
+      elements.password.focus();
+      return;
+    }
+    elements.password.value = '';
+    await verifyAdminSession(data.session);
+  } catch (error) {
+    setAuthStatus('');
+    setAuthError('Sign-in is temporarily unavailable. Please try again.');
+    elements.password.focus();
+  } finally {
+    elements.signIn.disabled = false;
+  }
+});
+
+elements.signOut.addEventListener('click', async () => {
+  elements.signOut.disabled = true;
+  await authClient?.auth.signOut();
+  elements.signOut.disabled = false;
+  showSignIn();
+});
+
+const initializeAuth = async () => {
+  try {
+    const response = await fetch('/api/auth/config', { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error('Auth configuration unavailable');
+    const config = await response.json();
+
+    if (!config.enabled) {
+      showDashboard(null);
+      return;
+    }
+    if (!window.supabase?.createClient) {
+      throw new Error('Supabase browser client unavailable');
+    }
+
+    authClient = window.supabase.createClient(
+      config.supabase_url,
+      config.supabase_publishable_key,
+      { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } },
+    );
+    elements.signIn.disabled = false;
+    const { data, error } = await authClient.auth.getSession();
+    if (error) throw error;
+    await verifyAdminSession(data.session);
+
+    authClient.auth.onAuthStateChange((event, session) => {
+      if (event === 'TOKEN_REFRESHED') accessToken = session?.access_token || null;
+      if (event === 'SIGNED_OUT') showSignIn();
+    });
+  } catch (error) {
+    elements.signIn.disabled = true;
+    setAuthStatus('');
+    setAuthError('Sign-in could not be initialized. Please try again later.');
+  }
+};
+
+initializeAuth();
 setInterval(() => {
-  if (document.visibilityState === 'visible') refresh();
+  if (document.visibilityState === 'visible' && !elements.main.hidden) refresh();
 }, REFRESH_INTERVAL_MS);
