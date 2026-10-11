@@ -25,7 +25,6 @@ Usage:
 """
 from __future__ import annotations
 
-import atexit
 import os
 import signal
 import socket
@@ -38,7 +37,6 @@ from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
-import httpx
 from dotenv import load_dotenv
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -111,8 +109,14 @@ class WorkerHeartbeat:
     """
 
     def __init__(self, client: TaskQueueClient,
-                 details: Callable[[], dict] | None = None):
+                 details: Callable[[], dict] | None = None,
+                 capabilities: dict | None = None):
         self.client = client
+        self.capabilities = capabilities or {
+            "task_types": ["image_generation"],
+            "profiles": ["full", "lightning"],
+            "mock_mode": MOCK_MODE,
+        }
         # Machine status (memory, ComfyUI) sent as heartbeat `details`.
         self._details = details
         self._lock = threading.Lock()
@@ -130,11 +134,7 @@ class WorkerHeartbeat:
             WORKER_ID,
             WORKER_NAME,
             WORKER_SESSION_ID,
-            capabilities={
-                "task_types": ["image_generation"],
-                "profiles": ["full", "lightning"],
-                "mock_mode": MOCK_MODE,
-            },
+            capabilities=self.capabilities,
             version=WORKER_VERSION,
         )
 
@@ -321,59 +321,10 @@ def worker_details(supervisor: ComfyUISupervisor | None) -> dict:
 
 
 def main() -> None:
-    client = TaskQueueClient(TASK_QUEUE_URL)
-    supervisor = build_supervisor()
-    if supervisor is not None:
-        # Never orphan a ComfyUI this worker started: stop it on exit,
-        # including Ctrl-C and `kill` (SIGTERM -> SystemExit -> atexit).
-        atexit.register(supervisor.stop)
-        for sig in SHUTDOWN_SIGNALS:
-            signal.signal(sig, lambda signum, frame: sys.exit(0))
-    heartbeat = WorkerHeartbeat(client, details=lambda: worker_details(supervisor))
-    heartbeat.start()
-    print(f"image_worker starting -- worker_id={WORKER_ID} mock={MOCK_MODE} "
-         f"queue={TASK_QUEUE_URL}")
-    while True:
-        task = client.claim_next(["image_generation"], WORKER_ID)
-        if task is None:
-            if supervisor is not None:
-                supervisor.maybe_stop_idle()
-            time.sleep(POLL_SECONDS)
-            continue
-
-        print(f"claimed {task['id']} (mock={MOCK_MODE})")
-        heartbeat.update(state="busy", task=task, stage="preparing",
-                         message="Preparing image generation")
-
-        # Two distinct failure modes, found live, that must NOT crash the
-        # worker: (1) the actual work (forge2 render) fails -- report it via
-        # fail_task; (2) reporting a result (success OR failure) itself gets
-        # rejected with a 409 because this task's lease expired mid-render
-        # and someone else already reclaimed/completed it -- nothing to do
-        # but log and move on, the work this worker just did is simply
-        # discarded. Before this fix, case (2) inside the exception handler
-        # for case (1) raised its own uncaught exception and killed the
-        # whole worker process.
-        try:
-            result = handle_task(client, task, heartbeat, supervisor)
-        except Exception as e:
-            print(f"work failed for {task['id']}: {e}")
-            try:
-                client.fail_task(task["id"], task["claim_token"], str(e))
-            except httpx.HTTPStatusError as report_err:
-                print(f"could not report failure for {task['id']} (claim likely "
-                     f"expired/reclaimed): {report_err}")
-            heartbeat.update(state="idle")
-            continue
-
-        try:
-            client.complete_task(task["id"], task["claim_token"], result)
-            print(f"completed {task['id']} -> {result}")
-        except httpx.HTTPStatusError as e:
-            print(f"could not report completion for {task['id']} (claim likely "
-                 f"expired/reclaimed -- the work finished but too late, someone "
-                 f"else already took over): {e}")
-        heartbeat.update(state="idle")
+    # Kept so `python workers/image_worker.py` (README, Colab notebook) still
+    # works: the per-machine loop now lives in local_worker.py.
+    from workers.local_worker import main as local_main
+    local_main()
 
 
 if __name__ == "__main__":
