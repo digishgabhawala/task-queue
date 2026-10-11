@@ -18,6 +18,11 @@ from collections.abc import Callable
 import httpx
 
 
+def _norm(name: str) -> str:
+    """Ollama lists an untagged model as `<name>:latest`."""
+    return name if ":" in name else f"{name}:latest"
+
+
 class OllamaManager:
     def __init__(self, url: str, default_model: str, *, idle_seconds: float = 300,
                  timeout: float = 900, http=httpx,
@@ -33,12 +38,14 @@ class OllamaManager:
         self._lock = threading.Lock()
 
     def _loaded_models(self) -> set[str] | None:
+        """Normalised names of loaded models, or None if that can't be known."""
         try:
             resp = self._http.get(f"{self.url}/api/ps", timeout=5)
             resp.raise_for_status()
-        except httpx.HTTPError:
+            models = resp.json().get("models", [])
+        except (httpx.HTTPError, ValueError, AttributeError):
             return None
-        return {m.get("name") or m.get("model") for m in resp.json().get("models", [])}
+        return {_norm(n) for m in models for n in (m.get("name"), m.get("model")) if n}
 
     def available(self) -> bool:
         try:
@@ -60,11 +67,16 @@ class OllamaManager:
             body["format"] = "json"
 
         with self._lock:
-            loaded_before = self._loaded_models() or set()
+            loaded_before = self._loaded_models()
+            # Ours only if Ollama positively showed the model NOT loaded. If
+            # that can't be known, assume it's the user's: leaving a model
+            # loaded is safer than unloading someone else's.
+            ours = loaded_before is not None and _norm(model) not in loaded_before
             started = time.monotonic()
             try:
                 resp = self._http.post(f"{self.url}/api/chat", json=body, timeout=self.timeout)
                 resp.raise_for_status()
+                data = resp.json()
             except httpx.HTTPStatusError as e:
                 raise RuntimeError(
                     f"text_unavailable: Ollama rejected model {model!r} "
@@ -72,10 +84,12 @@ class OllamaManager:
             except httpx.HTTPError as e:
                 raise RuntimeError(
                     f"text_unavailable: Ollama not reachable at {self.url}: {e}") from e
-            if model not in loaded_before:
-                self._owned = model  # we caused the load -> ours to unload
-            self._last_used = self._clock()
-            data = resp.json()
+            finally:
+                # Even a failed/timed-out call may have loaded the model --
+                # it must still be unloaded before the next render.
+                if ours:
+                    self._owned = model
+                self._last_used = self._clock()
         return {
             "content": (data.get("message") or {}).get("content", ""),
             "provider": "ollama",
@@ -105,5 +119,5 @@ class OllamaManager:
 
     def details(self) -> dict:
         loaded = self._loaded_models() or set()
-        return {"model": self.default_model, "loaded": self.default_model in loaded,
+        return {"model": self.default_model, "loaded": _norm(self.default_model) in loaded,
                 "managed": self._owned is not None}

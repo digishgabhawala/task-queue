@@ -16,20 +16,31 @@ class Resp:
             raise httpx.HTTPStatusError("boom", request=None, response=self)
 
 
+class GarbledResp(Resp):
+    def json(self):
+        raise ValueError("not json")
+
+
 class FakeOllama:
     """Stands in for the Ollama HTTP API (/api/ps, /api/chat, /api/generate, /api/tags)."""
 
-    def __init__(self, loaded=(), down=False, chat_status=200):
+    def __init__(self, loaded=(), down=False, chat_status=200, ps_status=200,
+                 ps_garbled=False):
         self.loaded = set(loaded)
         self.down = down
         self.chat_status = chat_status
+        self.ps_status = ps_status
+        self.ps_garbled = ps_garbled
         self.posts = []
 
     def get(self, url, timeout):
         if self.down:
             raise httpx.ConnectError("refused")
         if url.endswith("/api/ps"):
-            return Resp(data={"models": [{"name": m, "model": m} for m in self.loaded]})
+            if self.ps_garbled:
+                return GarbledResp()
+            return Resp(self.ps_status,
+                        {"models": [{"name": m, "model": m} for m in self.loaded]})
         return Resp(data={"models": []})  # /api/tags
 
     def post(self, url, json, timeout):
@@ -38,6 +49,8 @@ class FakeOllama:
         self.posts.append((url, json))
         if url.endswith("/api/chat"):
             if self.chat_status != 200:
+                if self.chat_status >= 500:
+                    self.loaded.add(json["model"])  # loaded, then failed mid-generation
                 return Resp(self.chat_status, {"error": "model not found"})
             self.loaded.add(json["model"])
             return Resp(data={"model": json["model"], "message": {"content": "hello"}})
@@ -125,3 +138,35 @@ def test_details_and_availability_when_ollama_is_down():
     assert m.available() is False
     assert m.details() == {"model": "qwen3:14b", "loaded": False, "managed": False}
     assert manager(FakeOllama()).available() is True
+
+
+def test_model_loaded_by_a_failed_chat_is_still_ours_to_unload():
+    fake = FakeOllama(chat_status=500)
+    m = manager(fake)
+    with pytest.raises(RuntimeError, match=r"^text_unavailable:"):
+        m.chat(PAYLOAD)
+    m.unload()  # e.g. before the next render
+    assert "qwen3:14b" not in fake.loaded
+
+
+def test_unknown_loaded_state_never_claims_ownership():
+    fake = FakeOllama(loaded=["qwen3:14b"], ps_status=500)  # ps broken, model is the user's
+    m = manager(fake)
+    m.chat(PAYLOAD)
+    assert m.details()["managed"] is False
+    m.unload()
+    assert "qwen3:14b" in fake.loaded
+
+
+def test_garbled_ps_reply_is_treated_as_unknown():
+    fake = FakeOllama(ps_garbled=True)
+    m = manager(fake)
+    assert m.chat(PAYLOAD)["content"] == "hello"
+    assert m.details()["managed"] is False
+
+
+def test_untagged_model_name_matches_latest_tag():
+    fake = FakeOllama(loaded=["qwen3:latest"])
+    m = OllamaManager("http://ollama", "qwen3", http=fake, clock=Clock())
+    m.chat({"messages": [{"role": "user", "content": "x"}]})
+    assert m.details() == {"model": "qwen3", "loaded": True, "managed": False}
