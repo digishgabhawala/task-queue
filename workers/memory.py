@@ -103,8 +103,15 @@ def top_memory_consumers(limit: int = 3) -> list[dict]:
 
 
 def required_gb(profile: str) -> float:
+    default = _DEFAULT_REQUIRED_GB.get(profile, 0.0)
     env = os.environ.get(f"MEMORY_REQUIRED_{profile.upper()}_GB")
-    return float(env) if env else _DEFAULT_REQUIRED_GB.get(profile, 0.0)
+    if not env:
+        return default
+    try:
+        return float(env)
+    except ValueError:
+        print(f"ignoring non-numeric MEMORY_REQUIRED_{profile.upper()}_GB={env!r}")
+        return default
 
 
 def memory_shortfall(profile: str) -> str | None:

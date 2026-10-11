@@ -90,8 +90,16 @@ def test_other_forge2_failures_are_not_labelled_corrupt(monkeypatch):
 
 
 class FakeSupervisor:
-    def __init__(self):
+    def __init__(self, managed=False):
         self.calls = []
+        self.managed = managed
+
+    def stop(self):
+        self.calls.append("stop")
+        self.managed = False
+
+    def request_restart(self):
+        self.calls.append("request_restart")
 
     def ensure_running(self):
         self.calls.append("ensure_running")
@@ -157,7 +165,7 @@ def test_comfyui_is_started_before_rendering_and_released_after(monkeypatch):
     assert len(ran) == 1
 
 
-def test_corrupt_render_restarts_comfyui_and_still_fails(monkeypatch):
+def test_corrupt_render_schedules_comfyui_restart_and_still_fails(monkeypatch):
     def corrupt(*args):
         raise RuntimeError("corrupt_output: ComfyUI returned a blank/uniform image")
 
@@ -165,7 +173,8 @@ def test_corrupt_render_restarts_comfyui_and_still_fails(monkeypatch):
     sup = FakeSupervisor()
     with pytest.raises(RuntimeError, match=r"^corrupt_output:"):
         worker.handle_task(UploadClient(), TASK, StageRecorder(), sup)
-    assert "restart" in sup.calls
+    assert "request_restart" in sup.calls
+    assert "restart" not in sup.calls  # fail_task must not wait for a restart
     assert sup.calls[-1] == "idle"
 
 
@@ -179,7 +188,37 @@ def test_other_render_failures_do_not_restart_comfyui(monkeypatch):
     sup = FakeSupervisor()
     with pytest.raises(subprocess.CalledProcessError):
         worker.handle_task(UploadClient(), TASK, StageRecorder(), sup)
-    assert "restart" not in sup.calls
+    assert "restart" not in sup.calls and "request_restart" not in sup.calls
+
+
+def test_memory_gate_frees_idle_worker_comfyui_before_refusing(monkeypatch):
+    import workers.image_worker as worker
+
+    answers = iter(["insufficient_memory: needs 14 GB", None])
+    worker_mod, ran = _real_mode(monkeypatch)
+    monkeypatch.setattr(worker.memory, "memory_shortfall", lambda profile: next(answers))
+    sup = FakeSupervisor(managed=True)
+    worker_mod.handle_task(UploadClient(), TASK, StageRecorder(), sup)
+    assert sup.calls[0] == "stop"
+    assert len(ran) == 1
+
+
+def test_memory_gate_never_stops_user_started_comfyui(monkeypatch):
+    worker, ran = _real_mode(monkeypatch, shortfall="insufficient_memory: needs 14 GB")
+    sup = FakeSupervisor(managed=False)
+    with pytest.raises(RuntimeError, match=r"^insufficient_memory:"):
+        worker.handle_task(UploadClient(), TASK, StageRecorder(), sup)
+    assert "stop" not in sup.calls
+    assert ran == []
+
+
+def test_sighup_is_handled_like_sigterm():
+    import signal
+
+    import workers.image_worker as worker
+
+    assert signal.SIGHUP in worker.SHUTDOWN_SIGNALS
+    assert signal.SIGTERM in worker.SHUTDOWN_SIGNALS
 
 
 def test_mock_mode_skips_memory_gate(monkeypatch):

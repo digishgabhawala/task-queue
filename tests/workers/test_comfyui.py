@@ -6,7 +6,8 @@ from workers.comfyui import ComfyUISupervisor, ComfyUIUnavailable
 
 
 class FakeProc:
-    def __init__(self):
+    def __init__(self, pid=4242):
+        self.pid = pid
         self.returncode = None
         self.terminated = False
         self.killed = False
@@ -57,7 +58,8 @@ class Harness:
         options = {"url": "http://127.0.0.1:8188", "start_cmd": ["start-comfy"],
                    "log_path": tmp_path / "comfyui.log", "idle_seconds": 600,
                    "start_timeout": 30, "health": self.health, "popen": self.popen,
-                   "clock": self.clock, "sleep": self.sleep}
+                   "clock": self.clock, "sleep": self.sleep,
+                   "pid_path": tmp_path / "comfyui.pid", "adopt": lambda pid: None}
         return ComfyUISupervisor(**(options | overrides))
 
 
@@ -189,3 +191,89 @@ def test_details_reports_user_started_comfyui_before_any_task(tmp_path):
 def test_details_reports_stopped_when_nothing_is_running(tmp_path):
     h = Harness(healthy=False)
     assert h.supervisor(tmp_path).details() == {"state": "stopped", "managed": False}
+
+
+
+def test_details_does_not_block_while_comfyui_is_starting(tmp_path):
+    import threading
+
+    h = Harness(healthy=False)
+    sup = h.supervisor(tmp_path)
+    holder_ready, release = threading.Event(), threading.Event()
+
+    def hold_lock():  # stands in for a long ensure_running()/restart()
+        with sup._lock:
+            sup._state = "starting"
+            holder_ready.set()
+            release.wait(5)
+
+    t = threading.Thread(target=hold_lock)
+    t.start()
+    holder_ready.wait(5)
+    try:
+        assert sup.details() == {"state": "starting", "managed": False}
+    finally:
+        release.set()
+        t.join()
+
+
+def test_requested_restart_happens_before_next_task_not_immediately(tmp_path):
+    h = Harness(healthy=False, healthy_after_polls=2)
+    sup = h.supervisor(tmp_path)
+    sup.ensure_running()
+    sup.request_restart()
+    assert len(h.launched) == 1  # failure gets reported first; no restart yet
+    sup.ensure_running()
+    assert h.launched[0][2].terminated
+    assert len(h.launched) == 2
+
+
+def test_requested_restart_ignored_for_user_started_comfyui(tmp_path):
+    h = Harness(healthy=True)
+    sup = h.supervisor(tmp_path)
+    sup.request_restart()
+    sup.ensure_running()
+    assert h.launched == []
+
+
+def test_started_comfyui_pid_is_recorded_and_cleared(tmp_path):
+    h = Harness(healthy=False, healthy_after_polls=2)
+    sup = h.supervisor(tmp_path)
+    sup.ensure_running()
+    assert (tmp_path / "comfyui.pid").read_text().strip() == "4242"
+    h.healthy, h.healthy_after_polls = False, None
+    sup.stop()
+    assert not (tmp_path / "comfyui.pid").exists()
+
+
+def test_orphan_from_previous_worker_is_adopted_as_managed(tmp_path):
+    (tmp_path / "comfyui.pid").write_text("4242")
+    orphan = FakeProc(pid=4242)
+    h = Harness(healthy=True)
+    sup = h.supervisor(tmp_path, adopt=lambda pid: orphan if pid == 4242 else None)
+    assert sup.details() == {"state": "ready", "managed": True}
+    sup.mark_idle()
+    h.now += 600
+    assert sup.maybe_stop_idle() is True
+    assert orphan.terminated
+
+
+def test_stale_pidfile_is_not_adopted(tmp_path):
+    (tmp_path / "comfyui.pid").write_text("999")
+    h = Harness(healthy=True)
+    sup = h.supervisor(tmp_path, adopt=lambda pid: None)  # pid gone / not ComfyUI
+    assert sup.details() == {"state": "ready", "managed": False}
+
+
+def test_stop_never_raises_even_if_kill_does_not_reap(tmp_path):
+    h = Harness(healthy=False, healthy_after_polls=2)
+    sup = h.supervisor(tmp_path)
+    sup.ensure_running()
+    proc = h.launched[0][2]
+
+    def never_dies(timeout=None):
+        raise subprocess.TimeoutExpired("comfy", timeout)
+
+    proc.terminate = proc.kill = lambda: None
+    proc.wait = never_dies
+    sup.stop()  # atexit path: must log, not raise

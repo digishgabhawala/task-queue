@@ -206,6 +206,13 @@ def _render_real(task: dict, payload: dict, heartbeat: WorkerHeartbeat | None,
     # The user picked the profile in the producer app; never downgrade it.
     # Refuse instead, so they can choose Lightning themselves.
     shortfall = memory.memory_shortfall(profile)
+    if shortfall and supervisor is not None and supervisor.managed:
+        # Our own idle ComfyUI may be what holds the memory (models stay
+        # loaded after a render). The worker may free it -- a user-started
+        # ComfyUI is never touched -- then measure again.
+        print("memory short with worker-owned ComfyUI loaded -- stopping it and re-checking")
+        supervisor.stop()
+        shortfall = memory.memory_shortfall(profile)
     if shortfall:
         raise RuntimeError(shortfall)
 
@@ -226,12 +233,9 @@ def _render_real(task: dict, payload: dict, heartbeat: WorkerHeartbeat | None,
         except RuntimeError as e:
             if supervisor and str(e).startswith("corrupt_output:"):
                 # Long ComfyUI uptime is a known cause of blank output: start
-                # fresh for the next task. No retry here -- the user decides.
-                try:
-                    if supervisor.restart():
-                        print("restarted managed ComfyUI after a blank render")
-                except Exception as restart_err:
-                    print(f"ComfyUI restart after blank render failed: {restart_err}")
+                # fresh before the next task (report the failure first; no
+                # retry here -- the user decides).
+                supervisor.request_restart()
             raise
     finally:
         if supervisor:
@@ -261,13 +265,19 @@ def handle_task(client: TaskQueueClient, task: dict,
     return {"image_artifact_id": artifact["id"]}
 
 
+# Signals that should shut the worker down cleanly (running atexit, which
+# stops a worker-started ComfyUI). SIGHUP = the terminal tab was closed.
+SHUTDOWN_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+
 def build_supervisor() -> ComfyUISupervisor | None:
     if MOCK_MODE:
         return None
     return ComfyUISupervisor(
         COMFYUI_URL, ["/bin/sh", COMFYUI_START_SCRIPT], Path(COMFYUI_LOG),
         manage=COMFYUI_MANAGE, idle_seconds=COMFYUI_IDLE_MINUTES * 60,
-        start_timeout=COMFYUI_START_TIMEOUT_SECONDS)
+        start_timeout=COMFYUI_START_TIMEOUT_SECONDS,
+        pid_path=Path(COMFYUI_LOG).with_suffix(".pid"))
 
 
 def worker_details(supervisor: ComfyUISupervisor | None) -> dict:
@@ -287,7 +297,8 @@ def main() -> None:
         # Never orphan a ComfyUI this worker started: stop it on exit,
         # including Ctrl-C and `kill` (SIGTERM -> SystemExit -> atexit).
         atexit.register(supervisor.stop)
-        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
+        for sig in SHUTDOWN_SIGNALS:
+            signal.signal(sig, lambda signum, frame: sys.exit(0))
     heartbeat = WorkerHeartbeat(client, details=lambda: worker_details(supervisor))
     heartbeat.start()
     print(f"image_worker starting -- worker_id={WORKER_ID} mock={MOCK_MODE} "

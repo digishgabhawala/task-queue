@@ -21,3 +21,4 @@ supabase/.temp/
 # OS cruft
 .DS_Store
 comfyui.log
+comfyui.pid
