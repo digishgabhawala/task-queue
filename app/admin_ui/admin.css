@@ -31,6 +31,10 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+}
+
 a {
   color: inherit;
 }
@@ -122,6 +126,157 @@ svg {
   background: var(--color-surface-subtle);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
+}
+
+.suite-actions,
+.account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.account-email {
+  max-width: 18rem;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quiet-button {
+  min-height: var(--control-height-md);
+  padding-inline: var(--space-3);
+  color: var(--color-text-strong);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.quiet-button:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-field-border-hover);
+}
+
+.auth-shell {
+  display: grid;
+  width: min(calc(100% - 2 * var(--page-gutter)), var(--content-reading));
+  min-height: calc(100dvh - var(--app-header-height));
+  margin-inline: auto;
+  padding-block: clamp(var(--space-10), 8vw, var(--space-20));
+  place-items: start center;
+}
+
+.auth-card {
+  width: min(100%, 32rem);
+  padding: clamp(var(--space-6), 5vw, var(--space-10));
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raised);
+}
+
+.auth-card h1 {
+  max-width: 10ch;
+  font-size: clamp(var(--font-size-3xl), 8vw, var(--font-size-4xl));
+  line-height: var(--line-height-tight);
+}
+
+.auth-summary {
+  margin: var(--space-4) 0 0;
+  color: var(--color-text-muted);
+}
+
+.auth-form {
+  display: grid;
+  gap: var(--space-5);
+  margin-top: var(--space-8);
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.field label {
+  color: var(--color-text-strong);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.field input {
+  width: 100%;
+  min-height: var(--control-height-lg);
+  padding-inline: var(--space-4);
+  color: var(--color-text);
+  background: var(--color-field-background);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+
+.field input:hover {
+  border-color: var(--color-field-border-hover);
+}
+
+.field input:focus {
+  border-color: var(--color-field-border-focus);
+}
+
+.primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-height-lg);
+  padding-inline: var(--space-5);
+  color: var(--color-text-on-action);
+  background: var(--color-action);
+  border: 1px solid var(--color-action);
+  border-radius: var(--radius-sm);
+  font-weight: var(--font-weight-semibold);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.primary-button:hover:not(:disabled) {
+  background: var(--color-action-hover);
+  border-color: var(--color-action-hover);
+}
+
+.primary-button:active:not(:disabled) {
+  background: var(--color-action-active);
+  border-color: var(--color-action-active);
+}
+
+.primary-button:disabled {
+  color: var(--color-text-disabled);
+  background: var(--color-action-disabled);
+  border-color: var(--color-action-disabled);
+}
+
+.auth-message {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text);
+  background: var(--color-info-surface);
+  border: 1px solid var(--color-info-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+}
+
+.auth-message.is-error {
+  color: var(--color-danger);
+  background: var(--color-danger-surface);
+  border-color: var(--color-danger-border);
+}
+
+.auth-footnote {
+  margin: var(--space-6) 0 0;
+  padding-top: var(--space-5);
+  color: var(--color-text-muted);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-xs);
 }
 
 .page-shell {
@@ -728,12 +883,21 @@ progress::-moz-progress-bar {
 
 @media (max-width: 31rem) {
   .suite-bar,
-  .page-shell {
+  .page-shell,
+  .auth-shell {
     width: min(calc(100% - 2 * var(--space-5)), var(--content-wide));
   }
 
   .read-only-label {
     display: none;
+  }
+
+  .account-email {
+    display: none;
+  }
+
+  .auth-card {
+    padding-inline: var(--space-5);
   }
 
   .connection-panel,

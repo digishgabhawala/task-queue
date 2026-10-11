@@ -71,8 +71,13 @@ battle-tested claim primitive than a Firestore transaction, and because
 Postgres is a better fit for the team's existing SQLAlchemy conventions
 (see the sibling repos).
 
-**No authentication yet.** Deliberate MVP1 scope -- revisit before this
-carries real multi-user traffic. Endpoints are open by design for now.
+**Human admin authentication is activation-ready but not the complete API
+security model.** The admin dashboard and its broad worker/task listings can
+use a Supabase email/password session plus an explicit administrator allow-list.
+See [Supabase authentication](docs/authentication.md). Producer, worker, and
+artifact routes retain their MVP access model until owner IDs, worker
+enrollment, and revocable machine credentials are implemented; the service is
+therefore not yet safe for untrusted multi-user traffic.
 
 ## Local development
 
@@ -102,6 +107,10 @@ after UI changes.
 
 The deployed dashboard is:
 [`https://task-queue-eight.vercel.app/admin`](https://task-queue-eight.vercel.app/admin).
+
+Authentication is off by default so local development is not disrupted. A
+hosted deployment enables it only after the administrator user exists and
+`AUTH_ENABLED`, `AUTH_ADMIN_EMAILS`, and `SUPABASE_PUBLISHABLE_KEY` are set.
 
 ## Deploying schema changes
 
@@ -219,9 +228,11 @@ at or below 60 seconds with the current two-minute offline threshold.
 - [x] Report coarse task phases (`claimed`, `preparing`, `rendering`,
   `uploading`, and terminal state).
 - [x] Provide a deployed, read-only admin dashboard for workers and tasks.
-- [ ] Add authentication for producer, worker, and admin endpoints before
-  this becomes a multi-user or externally shared service. Deliberately
-  deferred for the current single-user phase.
+- [x] Add opt-in Supabase authentication and an allow-list for the human admin
+  dashboard and broad worker/task listings.
+- [ ] Add owner-aware producer authentication, worker enrollment, revocable
+  machine credentials, and private artifact delivery before this becomes a
+  multi-user or externally shared service.
 - [ ] Resume the [Future MVP UI backlog](docs/future-ui-mvp.md) after login,
   authorization, and user management are available.
 - [ ] Define retention or manual cleanup for historical worker registrations;
