@@ -7,10 +7,17 @@ from sqlalchemy.orm import Session
 
 from .. import storage
 from ..db import get_db
-from ..models import Artifact, Task
-from ..schemas import TaskCompleteRequest, TaskFailRequest, TaskSubmitRequest
+from ..models import Artifact, Task, Worker
+from ..schemas import (
+    TaskCompleteRequest,
+    TaskFailRequest,
+    TaskSubmitRequest,
+    WorkerHeartbeatRequest,
+    WorkerRegisterRequest,
+)
 from ..services import artifact_service as asvc
 from ..services import task_service as tsvc
+from ..services import worker_service as wsvc
 
 router = APIRouter(prefix="/api")
 
@@ -29,6 +36,11 @@ def _serialize_task(task: Task) -> dict:
         "claimed_at": task.claimed_at,
         "lease_expires_at": task.lease_expires_at,
         "completed_at": task.completed_at,
+        "progress_stage": task.progress_stage,
+        "progress_message": task.progress_message,
+        "progress_current": task.progress_current,
+        "progress_total": task.progress_total,
+        "progress_updated_at": task.progress_updated_at,
         "expires_at": task.expires_at,
     }
 
@@ -44,9 +56,64 @@ def _serialize_artifact(artifact: Artifact) -> dict:
     }
 
 
+def _serialize_worker(worker: Worker) -> dict:
+    return {
+        "id": worker.id,
+        "name": worker.name,
+        "session_id": worker.session_id,
+        "capabilities": worker.capabilities,
+        "version": worker.version,
+        "state": worker.state,
+        "current_task_id": worker.current_task_id,
+        "registered_at": worker.registered_at,
+        "session_started_at": worker.session_started_at,
+        "last_heartbeat_at": worker.last_heartbeat_at,
+        "online": wsvc.is_online(worker),
+    }
+
+
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.post("/workers/register")
+def register_worker(req: WorkerRegisterRequest, db: Session = Depends(get_db)):
+    worker = wsvc.register_worker(
+        db,
+        worker_id=req.worker_id,
+        name=req.name,
+        session_id=req.session_id,
+        capabilities=req.capabilities,
+        version=req.version,
+    )
+    return _serialize_worker(worker)
+
+
+@router.post("/workers/{worker_id}/heartbeat")
+def worker_heartbeat(worker_id: str, req: WorkerHeartbeatRequest,
+                     db: Session = Depends(get_db)):
+    try:
+        worker = wsvc.heartbeat(
+            db,
+            worker_id=worker_id,
+            session_id=req.session_id,
+            state=req.state,
+            current_task_id=req.current_task_id,
+            claim_token=req.claim_token,
+            progress_stage=req.progress_stage,
+            progress_message=req.progress_message,
+            progress_current=req.progress_current,
+            progress_total=req.progress_total,
+        )
+        return _serialize_worker(worker)
+    except wsvc.WorkerServiceError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.get("/workers")
+def list_workers(db: Session = Depends(get_db)):
+    return [_serialize_worker(w) for w in wsvc.list_workers(db)]
 
 
 @router.post("/tasks")

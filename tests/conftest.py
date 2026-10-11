@@ -14,7 +14,7 @@ from app.db import engine
 @pytest.fixture(autouse=True)
 def _clean_tables():
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE tasks, artifacts RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE workers, tasks, artifacts RESTART IDENTITY CASCADE"))
     yield
 
 

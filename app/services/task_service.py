@@ -84,7 +84,10 @@ def list_tasks(db: Session, status: str | None = None, task_type: str | None = N
 _RECLAIM_SQL = text("""
     UPDATE tasks
     SET status = 'queued', claimed_by = NULL, claim_token = NULL,
-        claimed_at = NULL, lease_expires_at = NULL
+        claimed_at = NULL, lease_expires_at = NULL,
+        progress_stage = NULL, progress_message = NULL,
+        progress_current = NULL, progress_total = NULL,
+        progress_updated_at = NULL
     WHERE status = 'claimed'
       AND task_type = ANY(:task_types)
       AND lease_expires_at < :now
@@ -104,6 +107,9 @@ _CLAIM_SQL = text("""
     UPDATE tasks AS task
     SET status = 'claimed', claimed_by = :worker_id, claim_token = :claim_token,
         claimed_at = :now,
+        progress_stage = 'claimed', progress_message = 'Worker claimed task',
+        progress_current = NULL, progress_total = NULL,
+        progress_updated_at = :now,
         lease_expires_at = :now + make_interval(
             mins => COALESCE(CAST(:lease_minutes AS integer), candidate.lease_minutes)
         )
@@ -112,7 +118,10 @@ _CLAIM_SQL = text("""
     RETURNING task.id, task.task_type, task.payload, task.lease_minutes,
               task.status, task.result, task.error, task.claimed_by,
               task.claim_token, task.created_at, task.claimed_at,
-              task.lease_expires_at, task.completed_at, task.expires_at
+              task.lease_expires_at, task.completed_at,
+              task.progress_stage, task.progress_message,
+              task.progress_current, task.progress_total,
+              task.progress_updated_at, task.expires_at
 """)
 
 
@@ -158,6 +167,9 @@ def complete_task(db: Session, task_id: str, claim_token: str, result: dict) -> 
     task.status = "done"
     task.result = result
     task.completed_at = _now()
+    task.progress_stage = "complete"
+    task.progress_message = "Task completed"
+    task.progress_updated_at = task.completed_at
     db.commit()
     db.refresh(task)
     return task
@@ -173,6 +185,9 @@ def fail_task(db: Session, task_id: str, claim_token: str, error: str) -> Task:
     task.status = "failed"
     task.error = error
     task.completed_at = _now()
+    task.progress_stage = "failed"
+    task.progress_message = error[:500]
+    task.progress_updated_at = task.completed_at
     db.commit()
     db.refresh(task)
     return task

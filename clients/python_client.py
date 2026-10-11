@@ -48,6 +48,42 @@ class TaskQueueClient:
         resp.raise_for_status()
         return resp.json()
 
+    def register_worker(self, worker_id: str, name: str, session_id: str,
+                        capabilities: dict, version: str | None = None) -> dict:
+        resp = httpx.post(f"{self.base_url}/api/workers/register", json={
+            "worker_id": worker_id,
+            "name": name,
+            "session_id": session_id,
+            "capabilities": capabilities,
+            "version": version,
+        }, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.json()
+
+    def heartbeat(self, worker_id: str, session_id: str, state: str,
+                  current_task_id: str | None = None,
+                  claim_token: str | None = None,
+                  progress_stage: str | None = None,
+                  progress_message: str | None = None,
+                  progress_current: int | None = None,
+                  progress_total: int | None = None) -> dict:
+        resp = httpx.post(
+            f"{self.base_url}/api/workers/{worker_id}/heartbeat",
+            json={
+                "session_id": session_id,
+                "state": state,
+                "current_task_id": current_task_id,
+                "claim_token": claim_token,
+                "progress_stage": progress_stage,
+                "progress_message": progress_message,
+                "progress_current": progress_current,
+                "progress_total": progress_total,
+            },
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def wait_for_task(self, task_id: str, poll_seconds: float = 3.0,
                       timeout_seconds: float | None = None) -> dict:
         """Blocks until the task reaches done/failed. Raises TimeoutError if
