@@ -37,6 +37,13 @@ project; `tests/conftest.py` refuses to run unless `DATABASE_URL` and
 `DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres
 SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_SERVICE_KEY=<local key> pytest tests/`.
 
+Worker tests (`tests/workers/`) are pure unit tests and need no Docker or
+Supabase -- but the guard above still applies to them, because pytest loads
+the parent `tests/conftest.py` first. Pass local-looking URLs even when no
+database is running, e.g.
+`DATABASE_URL=postgresql+psycopg://x@127.0.0.1:1/x SUPABASE_URL=http://127.0.0.1:1
+pytest tests/workers` (nothing connects to them).
+
 ## Verified live
 
 - [x] Schema migration applies cleanly on a fresh `supabase start` --

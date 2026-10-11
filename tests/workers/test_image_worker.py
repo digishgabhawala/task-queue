@@ -63,28 +63,43 @@ def test_mock_mode_honors_mock_delay(monkeypatch):
     assert result == {"image_artifact_id": "artifact-1"}
 
 
-def _fail_forge2(monkeypatch, returncode):
-    import subprocess
+def _fake_forge2(monkeypatch, script):
+    """Point the worker at a tiny real process instead of forge2."""
+    import sys
 
     import workers.image_worker as worker
 
-    def run(cmd, **kwargs):
-        raise subprocess.CalledProcessError(returncode, cmd)
-
-    monkeypatch.setattr(worker.subprocess, "run", run)
+    monkeypatch.setattr(worker, "_build_real_command",
+                        lambda *args: [sys.executable, "-c", script, "out.png"])
     return worker
 
 
-def test_corrupt_render_exit_code_becomes_corrupt_output_error(monkeypatch):
-    worker = _fail_forge2(monkeypatch, 3)
-    with pytest.raises(RuntimeError, match=r"^corrupt_output:"):
+CORRUPT_LINE = ("corrupt_output: near-uniform image (max channel stddev 0.00); "
+                "saved as queue_ab12.png")
+
+
+def test_corrupt_render_carries_forge2_details(monkeypatch, capsys):
+    worker = _fake_forge2(monkeypatch, (
+        "import sys\n"
+        "print('forge2 progress log', file=sys.stderr)\n"
+        f"print({CORRUPT_LINE!r}, file=sys.stderr)\n"
+        "sys.exit(3)\n"))
+    with pytest.raises(RuntimeError) as err:
+        worker._run_real("gtee_dev", "waving", 42, "full")
+    assert str(err.value) == CORRUPT_LINE
+    assert "forge2 progress log" in capsys.readouterr().err  # logs still streamed live
+
+
+def test_corrupt_exit_without_message_still_labelled_corrupt(monkeypatch):
+    worker = _fake_forge2(monkeypatch, "import sys; sys.exit(3)")
+    with pytest.raises(RuntimeError, match=r"^corrupt_output: .*forge2 exit 3"):
         worker._run_real("gtee_dev", "waving", 42, "full")
 
 
 def test_other_forge2_failures_are_not_labelled_corrupt(monkeypatch):
     import subprocess
 
-    worker = _fail_forge2(monkeypatch, 1)
+    worker = _fake_forge2(monkeypatch, "import sys; sys.exit(1)")
     with pytest.raises(subprocess.CalledProcessError):
         worker._run_real("gtee_dev", "waving", 42, "full")
 
