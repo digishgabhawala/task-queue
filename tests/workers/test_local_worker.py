@@ -5,49 +5,51 @@ from workers import local_worker as lw
 TEXT, IMAGE = "text_generation", "image_generation"
 
 
-def test_explicit_task_types_win_over_detection():
-    assert lw.detect_task_types("text_generation", lambda: False, lambda: True) == [TEXT]
+def test_task_types_come_from_worker_configuration():
+    assert lw.configured_task_types("image_generation, text_generation") == [IMAGE, TEXT]
+    assert lw.configured_task_types("text_generation") == [TEXT]
 
 
-def test_auto_detection_uses_what_this_machine_can_do():
-    assert lw.detect_task_types("", lambda: True, lambda: True) == [TEXT, IMAGE]
-    assert lw.detect_task_types("", lambda: True, lambda: False) == [TEXT]
-    assert lw.detect_task_types("", lambda: False, lambda: True) == [IMAGE]
+def test_missing_configuration_is_an_error_not_a_guess():
+    with pytest.raises(ValueError, match="WORKER_TASK_TYPES"):
+        lw.configured_task_types("  ")
 
 
 def test_unknown_task_type_is_rejected():
     with pytest.raises(ValueError, match="video_generation"):
-        lw.detect_task_types("video_generation", lambda: True, lambda: True)
-
-
-def test_claim_order_puts_text_first():
-    assert lw.claim_order([IMAGE, TEXT]) == [TEXT, IMAGE]
+        lw.configured_task_types("video_generation")
 
 
 class Queue:
-    def __init__(self, tasks_by_type):
-        self.tasks, self.asked = tasks_by_type, []
+    def __init__(self, task):
+        self.task, self.asked = task, []
 
     def claim_next(self, task_types, worker_id):
         self.asked.append(task_types)
-        return self.tasks.get(task_types[0])
+        return self.task
 
 
-def test_waiting_text_task_is_claimed_before_waiting_image():
-    q = Queue({TEXT: {"id": "t"}, IMAGE: {"id": "i"}})
-    assert lw.claim_next_task(q, "w", [TEXT, IMAGE])["id"] == "t"
-    assert q.asked == [[TEXT]]
-
-
-def test_image_claimed_when_no_text_waiting():
-    q = Queue({IMAGE: {"id": "i"}})
-    assert lw.claim_next_task(q, "w", [TEXT, IMAGE])["id"] == "i"
+def test_worker_asks_for_the_next_task_of_any_configured_type_in_one_claim():
+    # No priority between types: the queue hands out the oldest waiting task.
+    q = Queue({"id": "oldest"})
+    assert lw.claim_next_task(q, "w", [IMAGE, TEXT])["id"] == "oldest"
+    assert q.asked == [[IMAGE, TEXT]]
 
 
 def test_text_only_worker_never_asks_for_images():
-    q = Queue({IMAGE: {"id": "i"}})
+    q = Queue(None)
     assert lw.claim_next_task(q, "w", [TEXT]) is None
     assert q.asked == [[TEXT]]
+
+
+def test_image_worker_entrypoint_defaults_to_images_only(monkeypatch):
+    import workers.image_worker as iw
+
+    started = []
+    monkeypatch.delenv("WORKER_TASK_TYPES", raising=False)
+    monkeypatch.setattr(lw, "main", lambda: started.append(lw.os.environ["WORKER_TASK_TYPES"]))
+    iw.main()
+    assert started == [IMAGE]
 
 
 class FakeOllama:

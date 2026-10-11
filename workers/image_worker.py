@@ -322,9 +322,11 @@ def worker_details(supervisor: ComfyUISupervisor | None) -> dict:
 
 def main() -> None:
     # Kept so `python workers/image_worker.py` (README, Colab notebook) still
-    # works: the per-machine loop now lives in local_worker.py.
-    from workers.local_worker import main as local_main
-    local_main()
+    # works: the per-machine loop now lives in local_worker.py. Started this
+    # way, a worker does images unless WORKER_TASK_TYPES says otherwise.
+    os.environ.setdefault("WORKER_TASK_TYPES", "image_generation")
+    from workers import local_worker
+    local_worker.main()
 
 
 if __name__ == "__main__":

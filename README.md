@@ -153,12 +153,12 @@ Worker environment options:
 | `MEMORY_REQUIRED_FULL_GB` | `14` | Free memory a Full render needs, else `insufficient_memory:` |
 | `MEMORY_REQUIRED_LIGHTNING_GB` | `0` | Same for Lightning (`0` = never refused) |
 
-**One worker per machine: `workers/local_worker.py`.** It advertises what
-this machine can do -- `WORKER_TASK_TYPES` (comma list), or auto-detected:
-`text_generation` if Ollama answers, `image_generation` if character-forge-v2
-and its ComfyUI launcher exist -- and runs **one task at a time**. A waiting
-text task is claimed before a waiting image task; a running render always
-finishes first. Memory is handed over explicitly: a model the worker loaded
+**One worker per machine: `workers/local_worker.py`.** Whoever runs the
+worker decides what it works on: `WORKER_TASK_TYPES` (comma list, required)
+-- it is not guessed from the machine (the worker only warns if, say, Ollama
+isn't answering). It runs **one task at a time** and takes the **next
+available task** of any configured type -- the queue hands out the oldest,
+with no priority between types (smarter scheduling may come later). Memory is handed over explicitly: a model the worker loaded
 is unloaded before any render and after `OLLAMA_IDLE_MINUTES` without text
 work; its own idle ComfyUI is stopped before text work. A model or ComfyUI
 someone else started is never unloaded/stopped. `python
@@ -166,7 +166,7 @@ workers/image_worker.py` still works (it starts the same loop).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WORKER_TASK_TYPES` | auto-detect | e.g. `text_generation` on a laptop without room for images |
+| `WORKER_TASK_TYPES` | required (`image_generation` via `image_worker.py`) | e.g. `text_generation,image_generation`, or just `text_generation` on a laptop without room for images |
 | `OLLAMA_URL` | `http://localhost:11434` | Text provider used by the worker |
 | `OLLAMA_MODEL` | `qwen3:14b` | Model when the task doesn't name one |
 | `OLLAMA_IDLE_MINUTES` | `5` | Unload a worker-loaded model after this long without text work |
