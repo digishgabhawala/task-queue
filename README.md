@@ -143,6 +143,24 @@ Worker environment options:
 | `HEARTBEAT_SECONDS` | `60` | Hosted heartbeat interval |
 | `POLL_SECONDS` | `3` | Delay between empty claim attempts |
 | `MOCK_DELAY_SECONDS` | `0` | Mock mode only: pretend rendering takes this long (UI testing) |
+| `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI the worker uses/manages |
+| `COMFYUI_MANAGE` | `true` | Start ComfyUI on demand (`false`: it must already be running) |
+| `COMFYUI_IDLE_MINUTES` | `10` | Stop a worker-started ComfyUI after this long without work |
+| `COMFYUI_START_TIMEOUT_SECONDS` | `300` | How long to wait for a started ComfyUI to answer |
+| `COMFYUI_START_SCRIPT` | `character-forge-v2/scripts/start_comfyui.sh` | How ComfyUI is launched |
+| `COMFYUI_LOG` | `task-queue/comfyui.log` | Output of the worker-started ComfyUI |
+| `MEMORY_REQUIRED_FULL_GB` | `14` | Free memory a Full render needs, else `insufficient_memory:` |
+| `MEMORY_REQUIRED_LIGHTNING_GB` | `0` | Same for Lightning (`0` = never refused) |
+
+**The worker manages ComfyUI (real mode).** Start only the worker. When a
+task arrives it checks free memory for the requested profile (refusing a Full
+render that can't fit, with an `insufficient_memory:` error the producer
+shows -- it never downgrades to Lightning itself), starts ComfyUI if needed,
+and stops it again after `COMFYUI_IDLE_MINUTES` without work. A blank render
+restarts ComfyUI before failing the task (`corrupt_output:`); the retry is the
+producer's call. A ComfyUI you started yourself is used but never stopped or
+restarted. Ctrl-C / `kill` on the worker also stops the ComfyUI it started.
+Heartbeats report `details.memory` and `details.comfyui`.
 
 `workers/image_worker.py` loads the repository's `.env` automatically.
 Values supplied by the launching shell take precedence. Keep the heartbeat

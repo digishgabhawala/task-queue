@@ -160,8 +160,12 @@ class ComfyUISupervisor:
     def details(self) -> dict:
         """Heartbeat `details.comfyui`. Notices a crash between tasks."""
         with self._lock:
-            if self._state == "ready" and not self._busy and not self._health(self.url):
-                if self._proc is not None and not self._child_alive():
-                    self._proc = None
-                self._state = "stopped"
+            if not self._busy and self._state in ("ready", "stopped"):
+                healthy = self._health(self.url)
+                if self._state == "ready" and not healthy:
+                    if self._proc is not None and not self._child_alive():
+                        self._proc = None
+                    self._state = "stopped"
+                elif self._state == "stopped" and healthy:
+                    self._state = "ready"  # e.g. a user-started ComfyUI
             return {"state": self._state, "managed": self.managed}
