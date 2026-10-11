@@ -34,6 +34,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -181,20 +182,49 @@ class WorkerHeartbeat:
 FORGE2_CORRUPT_EXIT_CODE = 3
 
 
+def _run_forge2(cmd: list[str], timeout: float) -> tuple[int, list[str]]:
+    """Run forge2, streaming its stderr (its log) live, and return the exit
+    code plus the last stderr lines -- so a failure can carry forge2's own
+    explanation without hiding a multi-hour render's progress."""
+    tail: deque[str] = deque(maxlen=40)
+    proc = subprocess.Popen(cmd, cwd=CHARACTER_FORGE_V2_PATH, stderr=subprocess.PIPE,
+                            text=True, errors="replace")
+
+    def pump() -> None:
+        for line in proc.stderr:
+            sys.stderr.write(line)
+            tail.append(line.rstrip("\n"))
+
+    reader = threading.Thread(target=pump, name="forge2-stderr", daemon=True)
+    reader.start()
+    try:
+        returncode = proc.wait(timeout=timeout)
+    except BaseException:
+        # Timeout, Ctrl-C or SIGTERM: don't leave forge2 running unattended.
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        reader.join(timeout=5)
+    return returncode, list(tail)
+
+
 def _run_real(character_id: str, task: str, seed: int, profile: str) -> bytes:
     cmd = _build_real_command(character_id, task, seed, profile)
     # Match the queue request's four-hour lease. A full 40-step render under
     # memory pressure has exceeded two hours, so the old two-hour subprocess
     # timeout could kill valid work while its queue claim was still healthy.
-    try:
-        subprocess.run(cmd, cwd=CHARACTER_FORGE_V2_PATH, check=True, timeout=14_400)
-    except subprocess.CalledProcessError as e:
-        if e.returncode == FORGE2_CORRUPT_EXIT_CODE:
-            # The producer recognises this prefix; retrying is its decision.
-            raise RuntimeError(
-                "corrupt_output: ComfyUI returned a blank/uniform image "
-                f"(forge2 exit {FORGE2_CORRUPT_EXIT_CODE})") from e
-        raise
+    returncode, tail = _run_forge2(cmd, timeout=14_400)
+    if returncode == FORGE2_CORRUPT_EXIT_CODE:
+        # The producer recognises this prefix; retrying is its decision.
+        # Prefer forge2's own line (measured spread + saved filename).
+        detail = next((line.strip() for line in reversed(tail)
+                       if line.strip().startswith("corrupt_output:")), None)
+        raise RuntimeError(detail or (
+            "corrupt_output: ComfyUI returned a blank/uniform image "
+            f"(forge2 exit {FORGE2_CORRUPT_EXIT_CODE})"))
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, cmd, stderr="\n".join(tail))
     out_name = cmd[-1]
     out_path = CHARACTER_FORGE_V2_PATH / "workspace" / character_id / "generated" / out_name
     return out_path.read_bytes()
