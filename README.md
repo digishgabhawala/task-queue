@@ -51,6 +51,11 @@ or care which.
   two minutes without a heartbeat. Busy heartbeats also renew a short rolling
   task lease and report coarse phases such as preparing, rendering, and
   uploading. Exact ComfyUI sampling progress is intentionally out of scope.
+  Heartbeats may carry an optional `details` object (≤ 4 KB) describing the
+  worker's machine -- the queue stores and returns it without interpreting
+  it. Convention used by the image worker (populated by later work):
+  `{"memory": {"available_gb": 18.2, "required_gb": {"full": 14, "lightning": 8}},
+  "comfyui": {"state": "stopped|starting|ready|restarting|failed", "managed": true}}`.
 
 ## Stack
 
@@ -150,10 +155,10 @@ at or below 60 seconds with the current two-minute offline threshold.
   deferred for the current single-user phase.
 - [ ] Define retention or manual cleanup for historical worker registrations;
   disappeared workers currently remain visible as offline history.
-- [ ] Add automated FastAPI route tests for registration, heartbeat, worker
-  listing, and the admin page. Service tests and live hosted checks exist.
-- [ ] Rerun the current 31-test Postgres/Storage suite when the local Supabase
-  stack is next started; it remains stopped to preserve image-rendering RAM.
+- [x] Add automated FastAPI route tests for registration, heartbeat, worker
+  listing, and the admin page.
+- [x] Rerun the Postgres/Storage suite against local Supabase (now 40 tests).
+  The suite refuses to run if `.env` points the database at a non-local host.
 
 Exact ComfyUI sampling-step extraction and worker controls such as
 pause/drain/shutdown are intentionally not part of the current scope.
