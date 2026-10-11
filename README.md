@@ -17,8 +17,9 @@ or care which.
 - **Generic on purpose.** The `tasks` table has no idea what `task_type`,
   `payload`, or `result` mean -- that contract lives between a producer and
   a worker for a given task type, documented per type, not enforced by the
-  queue. Today's task type is `image_generation`; adding a second (e.g.
-  `text_generation`) later means zero changes to this repo's own code.
+  queue. Task types today: `image_generation` and `text_generation` (the
+  second was added with zero changes to the queue itself -- see "Task
+  types" below).
 - **Pull-based, both directions.** Workers poll for available work; producers
   poll for their task's result. No callbacks -- a callback would require the
   caller to be inbound-reachable, which won't hold once producers themselves
@@ -152,6 +153,45 @@ Worker environment options:
 | `MEMORY_REQUIRED_FULL_GB` | `14` | Free memory a Full render needs, else `insufficient_memory:` |
 | `MEMORY_REQUIRED_LIGHTNING_GB` | `0` | Same for Lightning (`0` = never refused) |
 
+**One worker per machine: `workers/local_worker.py`.** It advertises what
+this machine can do -- `WORKER_TASK_TYPES` (comma list), or auto-detected:
+`text_generation` if Ollama answers, `image_generation` if character-forge-v2
+and its ComfyUI launcher exist -- and runs **one task at a time**. A waiting
+text task is claimed before a waiting image task; a running render always
+finishes first. Memory is handed over explicitly: a model the worker loaded
+is unloaded before any render and after `OLLAMA_IDLE_MINUTES` without text
+work; its own idle ComfyUI is stopped before text work. A model or ComfyUI
+someone else started is never unloaded/stopped. `python
+workers/image_worker.py` still works (it starts the same loop).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WORKER_TASK_TYPES` | auto-detect | e.g. `text_generation` on a laptop without room for images |
+| `OLLAMA_URL` | `http://localhost:11434` | Text provider used by the worker |
+| `OLLAMA_MODEL` | `qwen3:14b` | Model when the task doesn't name one |
+| `OLLAMA_IDLE_MINUTES` | `5` | Unload a worker-loaded model after this long without text work |
+| `OLLAMA_TIMEOUT_SECONDS` | `900` | Ceiling for one generation |
+
+### Task types
+
+`image_generation` -- payload `{"character_id", "task", "seed", "profile":
+"full"|"lightning"}`, result `{"image_artifact_id"}`; failure prefixes
+`insufficient_memory:`, `corrupt_output:`, `comfyui_unavailable:`.
+
+`text_generation` -- provider-neutral, so other providers (e.g. Groq) can be
+added worker-side without touching producers:
+
+```
+payload: {"messages": [{"role": "system"|"user"|"assistant", "content": "..."}],
+          "temperature": 0.2, "reasoning": true, "response_format": "json"|"text",
+          "model": null, "deadline_at": "2026-10-11T12:00:00+00:00"}
+result:  {"content": "...", "provider": "ollama", "model": "qwen3:14b", "duration_ms": 41230}
+```
+
+Failure prefixes: `expired:` (deadline passed before a worker was free --
+never run), `text_unavailable:` (provider down / model missing). Producers
+should submit with a short `retention_hours` (prompts contain user content).
+
 **The worker manages ComfyUI (real mode).** Start only the worker. When a
 task arrives it checks free memory for the requested profile (refusing a Full
 render that can't fit, with an `insufficient_memory:` error the producer
@@ -202,6 +242,11 @@ app/
 pyproject.toml's [tool.vercel]  -- points Vercel at app.main:app directly, no separate deploy glue needed
 supabase/migrations/           -- schema, storage bucket, pg_cron cleanup jobs
 clients/python_client.py       -- reusable by both producers and workers
-workers/image_worker.py        -- claims image_generation tasks (mock or real forge2)
+workers/local_worker.py        -- the one worker per machine: capabilities, claim loop
+workers/image_worker.py        -- image_generation handler (mock or real forge2)
+workers/text_worker.py         -- text_generation handler
+workers/ollama.py              -- Ollama provider + model memory ownership
+workers/comfyui.py             -- ComfyUI supervisor
+workers/memory.py              -- free-memory checks
 tests/                          -- pytest against real local Postgres (supabase start)
 ```
