@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     default_retention_hours: int = 48
     artifact_retention_hours: int = 168  # 7 days, more buffer than task retention
 
-    model_config = SettingsConfigDict(env_file=".env")
+    # The worker shares this .env (WORKER_ID, WORKER_NAME, ...); ignore keys
+    # the API itself doesn't use instead of refusing to start.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()
