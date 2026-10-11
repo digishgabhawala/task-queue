@@ -99,6 +99,13 @@ tasks, and coarse progress.
 The deployed dashboard is:
 [`https://task-queue-eight.vercel.app/admin`](https://task-queue-eight.vercel.app/admin).
 
+## Deploying schema changes
+
+Apply new migrations to the hosted project **before** the code that uses
+them reaches Vercel (`supabase db push`, then push/merge). Deploying first
+makes every `workers` query fail until the column exists, so all live
+workers get 500s on register/heartbeat.
+
 ## Trying it end to end (image generation)
 
 ```bash
