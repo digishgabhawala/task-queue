@@ -95,7 +95,10 @@ for local dev. See `.env.example` for what a real deployment overrides.
 The admin dashboard is available at `/admin` (for example,
 `http://127.0.0.1:8000/admin`). It shows registered workers, derived
 online/offline state, capabilities, current work, heartbeat recency, recent
-tasks, and coarse progress.
+tasks, and coarse progress. Its responsive, accessible visual foundation uses
+the AI Bharatiyaa Commons v0.2 design tokens pinned in
+`app/admin_ui/COMMONS_SOURCE.md`; run `python3 scripts/validate_admin_ui.py`
+after UI changes.
 
 The deployed dashboard is:
 [`https://task-queue-eight.vercel.app/admin`](https://task-queue-eight.vercel.app/admin).
@@ -237,7 +240,8 @@ app/
   services/task_service.py    -- submit/claim/complete/fail, the queue's core
   services/worker_service.py  -- registration, heartbeat, progress, lease renewal
   services/artifact_service.py
-  admin.py                    -- same-origin, read-only admin dashboard
+  admin.py                    -- same-origin, read-only admin dashboard route
+  admin_ui/                   -- dashboard HTML, CSS, JS, and pinned Commons tokens
   api/routes.py
 pyproject.toml's [tool.vercel]  -- points Vercel at app.main:app directly, no separate deploy glue needed
 supabase/migrations/           -- schema, storage bucket, pg_cron cleanup jobs

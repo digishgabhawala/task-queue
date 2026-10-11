@@ -58,6 +58,9 @@ def test_admin_page_renders():
     resp = client.get("/admin")
     assert resp.status_code == 200
     assert "Task Queue" in resp.text
+    assert "AI Bharatiyaa" in resp.text
+    assert 'aria-live="polite"' in resp.text
+    assert "/admin-assets/tokens.css" in resp.text
     assert "/admin-assets/admin.css" in resp.text
     assert "/admin-assets/admin.js" in resp.text
 
@@ -65,3 +68,4 @@ def test_admin_page_renders():
 def test_admin_assets_are_served():
     assert client.get("/admin-assets/admin.css").status_code == 200
     assert client.get("/admin-assets/admin.js").status_code == 200
+    assert client.get("/admin-assets/tokens.css").status_code == 200
