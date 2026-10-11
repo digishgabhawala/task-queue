@@ -52,6 +52,9 @@ WORKER_SESSION_ID = str(uuid.uuid4())
 WORKER_VERSION = "0.2.0"
 MOCK_MODE = os.environ.get("MOCK_MODE", "false").lower() == "true"
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "3"))
+# Mock mode only: pretend rendering takes this long, so progress/lost-worker
+# UI can be exercised without ComfyUI.
+MOCK_DELAY_SECONDS = float(os.environ.get("MOCK_DELAY_SECONDS", "0"))
 HEARTBEAT_SECONDS = float(os.environ.get("HEARTBEAT_SECONDS", "60"))
 
 # Sibling-directory convention, same as linkedin-content-agent's config.py.
@@ -163,6 +166,8 @@ def handle_task(client: TaskQueueClient, task: dict,
         if heartbeat:
             heartbeat.update(state="busy", task=task, stage="rendering",
                              message="Producing mock image")
+        if MOCK_DELAY_SECONDS:
+            time.sleep(MOCK_DELAY_SECONDS)
         image_bytes = _run_mock(character_id)
     else:
         if heartbeat:

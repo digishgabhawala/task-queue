@@ -135,6 +135,7 @@ Worker environment options:
 | `WORKER_NAME` | local hostname | Human-readable admin UI label |
 | `HEARTBEAT_SECONDS` | `60` | Hosted heartbeat interval |
 | `POLL_SECONDS` | `3` | Delay between empty claim attempts |
+| `MOCK_DELAY_SECONDS` | `0` | Mock mode only: pretend rendering takes this long (UI testing) |
 
 `workers/image_worker.py` loads the repository's `.env` automatically.
 Values supplied by the launching shell take precedence. Keep the heartbeat
