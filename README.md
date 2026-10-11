@@ -94,6 +94,7 @@ client = TaskQueueClient("http://127.0.0.1:8000")
 
 task = client.submit_task("image_generation", {
     "character_id": "gtee_dev", "task": "waving hello", "seed": 42,
+    "profile": "full",  # or "lightning"
 })
 result = client.wait_for_task(task["id"], timeout_seconds=30)
 print(result)  # {"status": "done", "result": {"image_artifact_id": "..."}, ...}
@@ -104,7 +105,8 @@ print(artifact["url"])  # open this -- it's gtee_dev's hero.png in mock mode
 
 Set `MOCK_MODE=false` (needs `character-forge-v2` set up with a running
 ComfyUI, see that repo's README) to exercise a real render instead of the
-instant mock path.
+instant mock path. The worker forwards the task's explicit `profile` to
+forge2 and defaults older payloads without that field to `full`.
 
 ## Project layout
 
