@@ -75,3 +75,33 @@ def test_worker_becomes_offline_after_two_minutes(db_session):
         worker, now=worker.last_heartbeat_at + timedelta(seconds=119))
     assert not wsvc.is_online(
         worker, now=worker.last_heartbeat_at + timedelta(seconds=121))
+
+
+def test_heartbeat_stores_details_and_keeps_them_when_omitted(db_session):
+    _register(db_session)
+    worker = wsvc.heartbeat(
+        db_session, worker_id="worker-1", session_id="session-1",
+        state="idle", current_task_id=None, claim_token=None,
+        progress_stage=None, progress_message=None,
+        progress_current=None, progress_total=None,
+        details={"comfyui": {"state": "stopped"}})
+    assert worker.details == {"comfyui": {"state": "stopped"}}
+
+    worker = wsvc.heartbeat(
+        db_session, worker_id="worker-1", session_id="session-1",
+        state="idle", current_task_id=None, claim_token=None,
+        progress_stage=None, progress_message=None,
+        progress_current=None, progress_total=None)
+    assert worker.details == {"comfyui": {"state": "stopped"}}
+
+
+def test_register_resets_details(db_session):
+    _register(db_session)
+    wsvc.heartbeat(
+        db_session, worker_id="worker-1", session_id="session-1",
+        state="idle", current_task_id=None, claim_token=None,
+        progress_stage=None, progress_message=None,
+        progress_current=None, progress_total=None,
+        details={"comfyui": {"state": "ready"}})
+    worker = _register(db_session, session_id="session-2")
+    assert worker.details == {}

@@ -62,6 +62,9 @@ class Worker(Base):
     name = Column(String, nullable=False)
     session_id = Column(String, nullable=False)
     capabilities = Column(JSONB, nullable=False, default=dict)
+    # Worker-reported machine status (memory, managed services). Opaque to the
+    # queue, same as capabilities -- the producer/worker pair owns its shape.
+    details = Column(JSONB, nullable=False, default=dict)
     version = Column(String, nullable=True)
     state = Column(String, nullable=False, default="idle")
     current_task_id = Column(

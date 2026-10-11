@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TaskSubmitRequest(BaseModel):
@@ -39,3 +40,11 @@ class WorkerHeartbeatRequest(BaseModel):
     progress_message: str | None = Field(default=None, max_length=500)
     progress_current: int | None = Field(default=None, ge=0)
     progress_total: int | None = Field(default=None, gt=0)
+    details: dict | None = None
+
+    @field_validator("details")
+    @classmethod
+    def _details_size(cls, value: dict | None) -> dict | None:
+        if value is not None and len(json.dumps(value)) > 4096:
+            raise ValueError("details must serialize to at most 4096 bytes")
+        return value
