@@ -125,6 +125,7 @@ def test_idle_managed_comfyui_is_stopped_after_timeout(tmp_path):
     h.now += 1
     assert sup.maybe_stop_idle() is True
     assert h.launched[0][2].terminated
+    h.healthy, h.healthy_after_polls = False, None  # the server is really gone now
     assert sup.details() == {"state": "stopped", "managed": False}
 
 
@@ -176,3 +177,15 @@ def test_stop_escalates_to_kill_when_terminate_hangs(tmp_path):
     proc.terminate, proc.wait = stubborn_terminate, wait
     sup.stop()
     assert proc.killed
+
+
+def test_details_reports_user_started_comfyui_before_any_task(tmp_path):
+    h = Harness(healthy=True)
+    sup = h.supervisor(tmp_path)
+    assert sup.details() == {"state": "ready", "managed": False}
+    assert h.launched == []
+
+
+def test_details_reports_stopped_when_nothing_is_running(tmp_path):
+    h = Harness(healthy=False)
+    assert h.supervisor(tmp_path).details() == {"state": "stopped", "managed": False}

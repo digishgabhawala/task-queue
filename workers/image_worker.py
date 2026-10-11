@@ -25,20 +25,28 @@ Usage:
 """
 from __future__ import annotations
 
+import atexit
 import os
+import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "clients"))
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "clients"))
+sys.path.insert(0, str(_REPO_ROOT))  # `python workers/image_worker.py` -> import workers.*
 from python_client import TaskQueueClient
+
+from workers import memory
+from workers.comfyui import ComfyUISupervisor
 
 # This worker runs as a standalone script, so the FastAPI application's
 # pydantic-settings loader is never imported. Load the repository-local .env
@@ -63,6 +71,18 @@ CHARACTER_FORGE_V2_PATH = Path(
     os.environ.get("CHARACTER_FORGE_V2_PATH", str(_WORKSPACE_ROOT / "character-forge-v2")))
 COMFYUI_ENV_PYTHON = os.environ.get(
     "COMFYUI_ENV_PYTHON", str(_WORKSPACE_ROOT / "comfyui-env" / "bin" / "python"))
+
+# ComfyUI supervision (real mode only). The worker starts ComfyUI on demand,
+# stops it after COMFYUI_IDLE_MINUTES without work, and restarts it after a
+# blank render. A ComfyUI already running when needed (user-started) is used
+# but never stopped. COMFYUI_MANAGE=false disables starting it entirely.
+COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
+COMFYUI_MANAGE = os.environ.get("COMFYUI_MANAGE", "true").lower() == "true"
+COMFYUI_IDLE_MINUTES = float(os.environ.get("COMFYUI_IDLE_MINUTES", "10"))
+COMFYUI_START_TIMEOUT_SECONDS = float(os.environ.get("COMFYUI_START_TIMEOUT_SECONDS", "300"))
+COMFYUI_START_SCRIPT = os.environ.get(
+    "COMFYUI_START_SCRIPT", str(CHARACTER_FORGE_V2_PATH / "scripts" / "start_comfyui.sh"))
+COMFYUI_LOG = os.environ.get("COMFYUI_LOG", str(_REPO_ROOT / "comfyui.log"))
 
 
 def _run_mock(character_id: str) -> bytes:
@@ -89,8 +109,11 @@ class WorkerHeartbeat:
     otherwise it reports at the configured one-minute interval.
     """
 
-    def __init__(self, client: TaskQueueClient):
+    def __init__(self, client: TaskQueueClient,
+                 details: Callable[[], dict] | None = None):
         self.client = client
+        # Machine status (memory, ComfyUI) sent as heartbeat `details`.
+        self._details = details
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._state = {
@@ -129,6 +152,12 @@ class WorkerHeartbeat:
     def _send(self) -> None:
         with self._lock:
             snapshot = dict(self._state)
+        if self._details is not None:
+            try:
+                snapshot["details"] = self._details()
+            except Exception as exc:
+                # Status reporting must never stop the heartbeat itself.
+                print(f"worker details unavailable: {exc}")
         self.client.heartbeat(WORKER_ID, WORKER_SESSION_ID, **snapshot)
 
     def _loop(self) -> None:
@@ -171,8 +200,47 @@ def _run_real(character_id: str, task: str, seed: int, profile: str) -> bytes:
     return out_path.read_bytes()
 
 
+def _render_real(task: dict, payload: dict, heartbeat: WorkerHeartbeat | None,
+                 supervisor: ComfyUISupervisor | None) -> bytes:
+    profile = payload.get("profile", "full")
+    # The user picked the profile in the producer app; never downgrade it.
+    # Refuse instead, so they can choose Lightning themselves.
+    shortfall = memory.memory_shortfall(profile)
+    if shortfall:
+        raise RuntimeError(shortfall)
+
+    if supervisor:
+        supervisor.mark_busy()
+    try:
+        if supervisor:
+            if heartbeat:
+                heartbeat.update(state="busy", task=task, stage="starting_comfyui",
+                                 message="Making sure ComfyUI is running")
+            supervisor.ensure_running()
+        if heartbeat:
+            heartbeat.update(state="busy", task=task, stage="rendering",
+                             message="Character Forge and ComfyUI are generating the image")
+        try:
+            return _run_real(payload["character_id"], payload["task"],
+                             payload.get("seed", 0), profile)
+        except RuntimeError as e:
+            if supervisor and str(e).startswith("corrupt_output:"):
+                # Long ComfyUI uptime is a known cause of blank output: start
+                # fresh for the next task. No retry here -- the user decides.
+                try:
+                    if supervisor.restart():
+                        print("restarted managed ComfyUI after a blank render")
+                except Exception as restart_err:
+                    print(f"ComfyUI restart after blank render failed: {restart_err}")
+            raise
+    finally:
+        if supervisor:
+            supervisor.mark_idle()
+
+
 def handle_task(client: TaskQueueClient, task: dict,
-                heartbeat: WorkerHeartbeat | None = None) -> dict:
+                heartbeat: WorkerHeartbeat | None = None,
+                supervisor: ComfyUISupervisor | None = None) -> dict:
     payload = task["payload"]
     character_id = payload["character_id"]
 
@@ -184,15 +252,7 @@ def handle_task(client: TaskQueueClient, task: dict,
             time.sleep(MOCK_DELAY_SECONDS)
         image_bytes = _run_mock(character_id)
     else:
-        if heartbeat:
-            heartbeat.update(state="busy", task=task, stage="rendering",
-                             message="Character Forge and ComfyUI are generating the image")
-        image_bytes = _run_real(
-            character_id,
-            payload["task"],
-            payload.get("seed", 0),
-            payload.get("profile", "full"),
-        )
+        image_bytes = _render_real(task, payload, heartbeat, supervisor)
 
     if heartbeat:
         heartbeat.update(state="busy", task=task, stage="uploading",
@@ -201,15 +261,42 @@ def handle_task(client: TaskQueueClient, task: dict,
     return {"image_artifact_id": artifact["id"]}
 
 
+def build_supervisor() -> ComfyUISupervisor | None:
+    if MOCK_MODE:
+        return None
+    return ComfyUISupervisor(
+        COMFYUI_URL, ["/bin/sh", COMFYUI_START_SCRIPT], Path(COMFYUI_LOG),
+        manage=COMFYUI_MANAGE, idle_seconds=COMFYUI_IDLE_MINUTES * 60,
+        start_timeout=COMFYUI_START_TIMEOUT_SECONDS)
+
+
+def worker_details(supervisor: ComfyUISupervisor | None) -> dict:
+    details = {}
+    if supervisor is not None:
+        details["comfyui"] = supervisor.details()
+        mem = memory.memory_details()
+        if mem is not None:
+            details["memory"] = mem
+    return details
+
+
 def main() -> None:
     client = TaskQueueClient(TASK_QUEUE_URL)
-    heartbeat = WorkerHeartbeat(client)
+    supervisor = build_supervisor()
+    if supervisor is not None:
+        # Never orphan a ComfyUI this worker started: stop it on exit,
+        # including Ctrl-C and `kill` (SIGTERM -> SystemExit -> atexit).
+        atexit.register(supervisor.stop)
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
+    heartbeat = WorkerHeartbeat(client, details=lambda: worker_details(supervisor))
     heartbeat.start()
     print(f"image_worker starting -- worker_id={WORKER_ID} mock={MOCK_MODE} "
          f"queue={TASK_QUEUE_URL}")
     while True:
         task = client.claim_next(["image_generation"], WORKER_ID)
         if task is None:
+            if supervisor is not None:
+                supervisor.maybe_stop_idle()
             time.sleep(POLL_SECONDS)
             continue
 
@@ -227,7 +314,7 @@ def main() -> None:
         # for case (1) raised its own uncaught exception and killed the
         # whole worker process.
         try:
-            result = handle_task(client, task, heartbeat)
+            result = handle_task(client, task, heartbeat, supervisor)
         except Exception as e:
             print(f"work failed for {task['id']}: {e}")
             try:
