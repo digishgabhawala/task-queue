@@ -61,3 +61,29 @@ def test_mock_mode_honors_mock_delay(monkeypatch):
 
     assert slept == [7.0]
     assert result == {"image_artifact_id": "artifact-1"}
+
+
+def _fail_forge2(monkeypatch, returncode):
+    import subprocess
+
+    import workers.image_worker as worker
+
+    def run(cmd, **kwargs):
+        raise subprocess.CalledProcessError(returncode, cmd)
+
+    monkeypatch.setattr(worker.subprocess, "run", run)
+    return worker
+
+
+def test_corrupt_render_exit_code_becomes_corrupt_output_error(monkeypatch):
+    worker = _fail_forge2(monkeypatch, 3)
+    with pytest.raises(RuntimeError, match=r"^corrupt_output:"):
+        worker._run_real("gtee_dev", "waving", 42, "full")
+
+
+def test_other_forge2_failures_are_not_labelled_corrupt(monkeypatch):
+    import subprocess
+
+    worker = _fail_forge2(monkeypatch, 1)
+    with pytest.raises(subprocess.CalledProcessError):
+        worker._run_real("gtee_dev", "waving", 42, "full")

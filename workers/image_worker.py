@@ -146,12 +146,26 @@ class WorkerHeartbeat:
         threading.Thread(target=self._loop, name="worker-heartbeat", daemon=True).start()
 
 
+# `forge2 generate` exits with this code when the render came back blank/
+# uniform (see character-forge-v2's forge2/quality.py). Kept as a literal --
+# the worker talks to forge2 only through its CLI, never by import.
+FORGE2_CORRUPT_EXIT_CODE = 3
+
+
 def _run_real(character_id: str, task: str, seed: int, profile: str) -> bytes:
     cmd = _build_real_command(character_id, task, seed, profile)
     # Match the queue request's four-hour lease. A full 40-step render under
     # memory pressure has exceeded two hours, so the old two-hour subprocess
     # timeout could kill valid work while its queue claim was still healthy.
-    subprocess.run(cmd, cwd=CHARACTER_FORGE_V2_PATH, check=True, timeout=14_400)
+    try:
+        subprocess.run(cmd, cwd=CHARACTER_FORGE_V2_PATH, check=True, timeout=14_400)
+    except subprocess.CalledProcessError as e:
+        if e.returncode == FORGE2_CORRUPT_EXIT_CODE:
+            # The producer recognises this prefix; retrying is its decision.
+            raise RuntimeError(
+                "corrupt_output: ComfyUI returned a blank/uniform image "
+                f"(forge2 exit {FORGE2_CORRUPT_EXIT_CODE})") from e
+        raise
     out_name = cmd[-1]
     out_path = CHARACTER_FORGE_V2_PATH / "workspace" / character_id / "generated" / out_name
     return out_path.read_bytes()
