@@ -277,3 +277,25 @@ def test_stop_never_raises_even_if_kill_does_not_reap(tmp_path):
     proc.terminate = proc.kill = lambda: None
     proc.wait = never_dies
     sup.stop()  # atexit path: must log, not raise
+
+
+def test_failed_state_recovers_when_comfyui_is_started_by_hand(tmp_path):
+    h = Harness(healthy=False)
+    sup = h.supervisor(tmp_path, manage=False)
+    with pytest.raises(ComfyUIUnavailable):
+        sup.ensure_running()
+    assert sup.details()["state"] == "failed"
+    h.healthy = True  # user starts ComfyUI manually
+    assert sup.details() == {"state": "ready", "managed": False}
+
+
+def test_crash_of_own_comfyui_mid_render_is_reported_without_probing(tmp_path):
+    h = Harness(healthy=False, healthy_after_polls=2)
+    sup = h.supervisor(tmp_path)
+    sup.ensure_running()
+    sup.mark_busy()
+    probes = h.polls
+    assert sup.details() == {"state": "ready", "managed": True}
+    h.launched[0][2].returncode = -9  # ComfyUI died during the render
+    assert sup.details() == {"state": "stopped", "managed": False}
+    assert h.polls == probes  # no HTTP probes while a render is running
