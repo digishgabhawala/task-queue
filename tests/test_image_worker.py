@@ -41,3 +41,23 @@ def test_worker_heartbeat_reports_registration_and_progress(monkeypatch):
     assert client.registered[0][:3] == ("worker-1", "Test Mac", "session-1")
     assert client.last_heartbeat[1]["current_task_id"] == "task-1"
     assert client.last_heartbeat[1]["progress_stage"] == "rendering"
+
+
+def test_mock_mode_honors_mock_delay(monkeypatch):
+    import workers.image_worker as worker
+
+    slept = []
+    monkeypatch.setattr(worker, "MOCK_MODE", True)
+    monkeypatch.setattr(worker, "MOCK_DELAY_SECONDS", 7.0)
+    monkeypatch.setattr(worker.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(worker, "_run_mock", lambda character_id: b"png")
+
+    class Client:
+        def upload_artifact(self, content, content_type, filename):
+            return {"id": "artifact-1"}
+
+    result = worker.handle_task(
+        Client(), {"id": "t1", "claim_token": "c", "payload": {"character_id": "gtee_dev"}})
+
+    assert slept == [7.0]
+    assert result == {"image_artifact_id": "artifact-1"}
