@@ -10,7 +10,8 @@ the rest of the queue (submit/claim/complete/artifact-retrieval) get tested
 in milliseconds instead of a real 15-40 min render.
 
 Task payload contract for task_type="image_generation":
-    {"character_id": str, "task": str, "seed": int}
+    {"character_id": str, "task": str, "seed": int,
+     "profile": "full" | "lightning"}
 Result on success:
     {"image_artifact_id": str}
 
@@ -56,15 +57,22 @@ def _run_mock(character_id: str) -> bytes:
     return hero_path.read_bytes()
 
 
-def _run_real(character_id: str, task: str, seed: int) -> bytes:
+def _build_real_command(character_id: str, task: str, seed: int,
+                        profile: str) -> list[str]:
+    if profile not in ("full", "lightning"):
+        raise ValueError(f"unsupported image profile: {profile!r}")
     out_name = f"queue_{uuid.uuid4().hex[:8]}.png"
-    cmd = [COMFYUI_ENV_PYTHON, "-m", "forge2.cli", "generate", character_id, task,
-          "--seed", str(seed), "--out", out_name]
-    # 7200s, matching forge2's own comfy.timeout_s ceiling (configs/default.yaml)
-    # -- found live: a real render on a loaded Mac took ~2 hours, well past the
-    # 3600s this used to be set to, so the worker gave up before forge2 itself
-    # would have.
-    subprocess.run(cmd, cwd=CHARACTER_FORGE_V2_PATH, check=True, timeout=7200)
+    return [COMFYUI_ENV_PYTHON, "-m", "forge2.cli", "generate", character_id, task,
+            "--seed", str(seed), "--profile", profile, "--out", out_name]
+
+
+def _run_real(character_id: str, task: str, seed: int, profile: str) -> bytes:
+    cmd = _build_real_command(character_id, task, seed, profile)
+    # Match the queue request's four-hour lease. A full 40-step render under
+    # memory pressure has exceeded two hours, so the old two-hour subprocess
+    # timeout could kill valid work while its queue claim was still healthy.
+    subprocess.run(cmd, cwd=CHARACTER_FORGE_V2_PATH, check=True, timeout=14_400)
+    out_name = cmd[-1]
     out_path = CHARACTER_FORGE_V2_PATH / "workspace" / character_id / "generated" / out_name
     return out_path.read_bytes()
 
@@ -76,7 +84,12 @@ def handle_task(client: TaskQueueClient, task: dict) -> dict:
     if MOCK_MODE:
         image_bytes = _run_mock(character_id)
     else:
-        image_bytes = _run_real(character_id, payload["task"], payload.get("seed", 0))
+        image_bytes = _run_real(
+            character_id,
+            payload["task"],
+            payload.get("seed", 0),
+            payload.get("profile", "full"),
+        )
 
     artifact = client.upload_artifact(image_bytes, "image/png", filename=f"{task['id']}.png")
     return {"image_artifact_id": artifact["id"]}
