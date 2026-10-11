@@ -3,27 +3,119 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Task Queue Admin</title>
+  <meta name="theme-color" content="#f7f8fa">
+  <meta name="description" content="Read-only operations dashboard for Task Queue workers and recent activity.">
+  <title>Task Queue · AI Bharatiyaa</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anek+Latin:wdth,wght@75..125,400..700&amp;family=Noto+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin-assets/tokens.css">
   <link rel="stylesheet" href="/admin-assets/admin.css">
   <script src="/admin-assets/admin.js" defer></script>
 </head>
 <body>
-  <main>
-    <header>
+  <a class="skip-link" href="#main">Skip to queue overview</a>
+
+  <header class="suite-bar">
+    <a class="suite-brand" href="/admin" aria-label="Task Queue admin home">
+      <span class="suite-mark" aria-hidden="true">ai</span>
+      <span translate="no">AI Bharatiyaa</span>
+    </a>
+    <span class="read-only-label">Read-only admin</span>
+  </header>
+
+  <main id="main" class="page-shell">
+    <section class="page-heading" aria-labelledby="page-title">
       <div>
-        <h1>Task Queue</h1>
-        <div class="muted">Workers and recent activity</div>
+        <p class="product-context">Distributed compute</p>
+        <h1 id="page-title">Task Queue</h1>
+        <p class="page-summary">Monitor workers, queued work, and recent task progress across your machines.</p>
       </div>
-      <div id="updated" class="muted">Loading…</div>
-    </header>
-    <section class="cards">
-      <div class="card"><div class="muted">Workers online</div><div class="number" id="online">–</div></div>
-      <div class="card"><div class="muted">Workers busy</div><div class="number" id="busy">–</div></div>
-      <div class="card"><div class="muted">Tasks queued</div><div class="number" id="queued">–</div></div>
-      <div class="card"><div class="muted">Tasks running</div><div class="number" id="running">–</div></div>
+      <div class="connection-panel">
+        <div id="connection-summary" class="connection-summary" role="status" aria-live="polite" aria-atomic="true">
+          <span class="connection-dot" aria-hidden="true"></span>
+          <span id="updated">Connecting to queue…</span>
+        </div>
+        <button id="refresh" class="refresh-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.3L13 11h8V3l-3.3 3.3Z"/></svg>
+          <span>Refresh</span>
+        </button>
+      </div>
     </section>
-    <section class="panel"><h2>Registered workers</h2><div id="workers"></div></section>
-    <section class="panel"><h2>Recent tasks</h2><div id="tasks"></div></section>
+
+    <section class="metric-strip" aria-label="Queue summary">
+      <article class="metric">
+        <span>Workers online</span>
+        <strong id="online" aria-label="Workers online">–</strong>
+        <small id="online-note">Connecting</small>
+      </article>
+      <article class="metric">
+        <span>Workers busy</span>
+        <strong id="busy" aria-label="Workers busy">–</strong>
+        <small id="busy-note">Connecting</small>
+      </article>
+      <article class="metric">
+        <span>Tasks queued</span>
+        <strong id="queued" aria-label="Tasks queued">–</strong>
+        <small id="queued-note">Connecting</small>
+      </article>
+      <article class="metric">
+        <span>Tasks running</span>
+        <strong id="running" aria-label="Tasks running">–</strong>
+        <small id="running-note">Connecting</small>
+      </article>
+    </section>
+
+    <section id="attention" class="attention" aria-labelledby="attention-title" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 1 21h22L12 2Zm0 4 7.5 13h-15L12 6Zm-1 4v5h2v-5h-2Zm0 7v2h2v-2h-2Z"/></svg>
+      <div>
+        <h2 id="attention-title">Needs attention</h2>
+        <p id="attention-message"></p>
+      </div>
+    </section>
+
+    <div class="data-stack">
+      <section class="data-panel" aria-labelledby="workers-title">
+        <header class="panel-heading">
+          <div>
+            <h2 id="workers-title">Registered workers</h2>
+            <p>Heartbeat, capability, and current assignment.</p>
+          </div>
+          <span id="workers-count" class="record-count">Loading</span>
+        </header>
+        <div id="workers-message" class="panel-message" hidden></div>
+        <div id="workers" class="table-region" aria-busy="true">
+          <div class="loading-state" role="status">
+            <span class="loading-line loading-line-short"></span>
+            <span class="loading-line"></span>
+            <span>Loading workers…</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="data-panel" aria-labelledby="tasks-title">
+        <header class="panel-heading">
+          <div>
+            <h2 id="tasks-title">Recent tasks</h2>
+            <p>Latest queue activity and worker-reported progress.</p>
+          </div>
+          <span id="tasks-count" class="record-count">Loading</span>
+        </header>
+        <div id="tasks-message" class="panel-message" hidden></div>
+        <div id="tasks" class="table-region" aria-busy="true">
+          <div class="loading-state" role="status">
+            <span class="loading-line loading-line-short"></span>
+            <span class="loading-line"></span>
+            <span>Loading tasks…</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="page-footer">
+      <span>Refreshes every 15 seconds while this page is open.</span>
+      <code translate="no">commons@741e8ce</code>
+    </footer>
   </main>
 </body>
 </html>
