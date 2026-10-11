@@ -62,6 +62,7 @@ def _serialize_worker(worker: Worker) -> dict:
         "name": worker.name,
         "session_id": worker.session_id,
         "capabilities": worker.capabilities,
+        "details": worker.details or {},
         "version": worker.version,
         "state": worker.state,
         "current_task_id": worker.current_task_id,
@@ -105,6 +106,7 @@ def worker_heartbeat(worker_id: str, req: WorkerHeartbeatRequest,
             progress_message=req.progress_message,
             progress_current=req.progress_current,
             progress_total=req.progress_total,
+            details=req.details,
         )
         return _serialize_worker(worker)
     except wsvc.WorkerServiceError as e:

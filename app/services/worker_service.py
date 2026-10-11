@@ -30,6 +30,7 @@ def register_worker(db: Session, *, worker_id: str, name: str, session_id: str,
     worker.session_id = session_id
     worker.capabilities = capabilities
     worker.version = version
+    worker.details = {}
     worker.state = "idle"
     worker.current_task_id = None
     worker.session_started_at = now
@@ -42,7 +43,8 @@ def register_worker(db: Session, *, worker_id: str, name: str, session_id: str,
 def heartbeat(db: Session, *, worker_id: str, session_id: str, state: str,
               current_task_id: str | None, claim_token: str | None,
               progress_stage: str | None, progress_message: str | None,
-              progress_current: int | None, progress_total: int | None) -> Worker:
+              progress_current: int | None, progress_total: int | None,
+              details: dict | None = None) -> Worker:
     worker = db.get(Worker, worker_id)
     if worker is None:
         raise WorkerServiceError(f"worker {worker_id} is not registered")
@@ -61,6 +63,8 @@ def heartbeat(db: Session, *, worker_id: str, session_id: str, state: str,
     worker.state = state
     worker.current_task_id = current_task_id
     worker.last_heartbeat_at = now
+    if details is not None:
+        worker.details = details
 
     if current_task_id is not None:
         task = db.get(Task, current_task_id)

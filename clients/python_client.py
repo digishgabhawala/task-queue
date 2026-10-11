@@ -66,7 +66,8 @@ class TaskQueueClient:
                   progress_stage: str | None = None,
                   progress_message: str | None = None,
                   progress_current: int | None = None,
-                  progress_total: int | None = None) -> dict:
+                  progress_total: int | None = None,
+                  details: dict | None = None) -> dict:
         resp = httpx.post(
             f"{self.base_url}/api/workers/{worker_id}/heartbeat",
             json={
@@ -78,6 +79,7 @@ class TaskQueueClient:
                 "progress_message": progress_message,
                 "progress_current": progress_current,
                 "progress_total": progress_total,
+                "details": details,
             },
             timeout=self.timeout,
         )
