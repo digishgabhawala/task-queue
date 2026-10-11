@@ -35,9 +35,15 @@ import uuid
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "clients"))
 from python_client import TaskQueueClient
+
+# This worker runs as a standalone script, so the FastAPI application's
+# pydantic-settings loader is never imported. Load the repository-local .env
+# explicitly while preserving any values supplied by the launching shell.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 TASK_QUEUE_URL = os.environ.get("TASK_QUEUE_URL", "http://127.0.0.1:8000")
 WORKER_NAME = os.environ.get("WORKER_NAME", socket.gethostname())
