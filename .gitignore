@@ -10,6 +10,7 @@ venv/
 # Secrets -- real values only ever live in Vercel's dashboard or a local
 # .env, never in git. See .env.example for what's expected.
 .env
+.env.local
 
 # Vercel
 .vercel/
