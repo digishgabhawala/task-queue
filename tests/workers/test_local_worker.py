@@ -117,3 +117,38 @@ def test_network_error_while_reporting_a_result_does_not_crash_the_worker():
     task = {"id": "t1", "claim_token": "c", "task_type": TEXT}
     lw.report_result(FlakyQueue(), task, {"content": "x"})        # must not raise
     lw.report_failure(FlakyQueue(), task, RuntimeError("boom"))   # must not raise
+
+
+class UnloadingOllama:
+    def __init__(self, unloaded):
+        self.unloaded = unloaded
+
+    def unload(self):
+        return self.unloaded
+
+
+def test_image_after_unloading_own_model_waits_for_memory_to_be_released(monkeypatch):
+    answers = iter(["insufficient_memory: 1.1 GB", "insufficient_memory: 6 GB", None])
+    slept = []
+    monkeypatch.setattr(lw.memory, "memory_shortfall", lambda profile: next(answers))
+    monkeypatch.setattr(lw.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(lw.image_worker, "handle_task", lambda c, t, h, s: {"img": 1})
+    task = {"id": "i", "task_type": IMAGE, "payload": {"profile": "full"}}
+    assert lw.run_task(None, task, None, None, UnloadingOllama(True)) == {"img": 1}
+    assert len(slept) == 2  # waited until the freed memory showed up
+
+
+def test_no_wait_when_nothing_was_unloaded(monkeypatch):
+    monkeypatch.setattr(lw.memory, "memory_shortfall",
+                        lambda profile: pytest.fail("no unload, no settle wait"))
+    monkeypatch.setattr(lw.image_worker, "handle_task", lambda c, t, h, s: {"img": 1})
+    task = {"id": "i", "task_type": IMAGE, "payload": {"profile": "full"}}
+    assert lw.run_task(None, task, None, None, UnloadingOllama(False)) == {"img": 1}
+
+
+def test_settle_wait_is_bounded(monkeypatch):
+    monkeypatch.setattr(lw.memory, "memory_shortfall", lambda profile: "insufficient_memory: x")
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr(lw.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(lw.time, "sleep", lambda s: None)
+    lw.wait_for_memory_release("full", timeout=60)  # returns; the real gate then decides

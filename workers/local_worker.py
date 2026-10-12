@@ -37,6 +37,9 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:14b")
 OLLAMA_IDLE_MINUTES = float(os.environ.get("OLLAMA_IDLE_MINUTES", "5"))
 OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "900"))
+# After unloading its own model before a render, how long to wait for macOS
+# to actually hand the memory back before the memory check runs.
+MEMORY_SETTLE_SECONDS = float(os.environ.get("MEMORY_SETTLE_SECONDS", "60"))
 
 
 def configured_task_types(configured: str) -> list[str]:
@@ -87,13 +90,29 @@ def report_failure(client, task: dict, error: Exception) -> None:
         print(f"could not report failure for {task['id']}: {e!r}")
 
 
+def wait_for_memory_release(profile: str, timeout: float, poll: float = 2.0) -> None:
+    """Freed memory (e.g. an unloaded 15 GB model) shows up in the OS a few
+    seconds later -- found live: measuring right after the unload refused a
+    render with '1.1 GB free' that minutes later read 12 GB. Wait (bounded)
+    until the profile's requirement is met; the real gate decides after."""
+    start = time.monotonic()
+    while memory.memory_shortfall(profile) is not None:
+        if time.monotonic() - start >= timeout:
+            return
+        time.sleep(poll)
+
+
 def run_task(client, task: dict, heartbeat, supervisor, ollama) -> dict:
     task_type = task.get("task_type")
     if task_type == TEXT:
         return handle_text_task(task, heartbeat, ollama, supervisor)
     if task_type == IMAGE:
-        if ollama is not None:
-            ollama.unload()  # only if this worker loaded it -- renders need the memory
+        # Only a model this worker loaded is unloaded -- renders need the memory.
+        if ollama is not None and ollama.unload():
+            if heartbeat:
+                heartbeat.update(state="busy", task=task, stage="freeing_memory",
+                                 message="Waiting for the text model's memory to be released")
+            wait_for_memory_release(task["payload"].get("profile", "full"), MEMORY_SETTLE_SECONDS)
         return image_worker.handle_task(client, task, heartbeat, supervisor)
     raise ValueError(f"unsupported task type {task_type!r}")
 
