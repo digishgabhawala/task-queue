@@ -92,3 +92,28 @@ def test_heartbeat_registers_detected_capabilities():
 
     WorkerHeartbeat(Client(), capabilities={"task_types": [TEXT]}).register()
     assert registered == {"task_types": [TEXT]}
+
+
+def test_network_error_while_claiming_does_not_crash_the_worker():
+    import httpx
+
+    class FlakyQueue:
+        def claim_next(self, task_types, worker_id):
+            raise httpx.ReadTimeout("The read operation timed out")
+
+    assert lw.claim_next_task(FlakyQueue(), "w", [TEXT]) is None  # logged; next poll retries
+
+
+def test_network_error_while_reporting_a_result_does_not_crash_the_worker():
+    import httpx
+
+    class FlakyQueue:
+        def complete_task(self, task_id, claim_token, result):
+            raise httpx.ConnectError("connection reset")
+
+        def fail_task(self, task_id, claim_token, error):
+            raise httpx.ReadTimeout("timed out")
+
+    task = {"id": "t1", "claim_token": "c", "task_type": TEXT}
+    lw.report_result(FlakyQueue(), task, {"content": "x"})        # must not raise
+    lw.report_failure(FlakyQueue(), task, RuntimeError("boom"))   # must not raise
