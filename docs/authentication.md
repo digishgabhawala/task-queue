@@ -21,6 +21,29 @@ email and password:
 Human browser sessions must never be copied into workers. Worker enrollment
 and revocable machine credentials are the next authentication milestone.
 
+## Machine (service) API keys
+
+Apps that need an admin-only read -- today `linkedin-content-agent` reading
+`GET /api/workers` for its worker badge and memory pre-check -- use their own
+revocable key, never a human session:
+
+- The app sends `X-API-Key: <raw key>`; `GET /api/workers` accepts either an
+  admin Bearer session or a configured key (`require_admin_or_service`).
+- The server only stores **hashes**: `SERVICE_API_KEYS` is a comma list of
+  `name:<sha256 hex of the key>`. Malformed entries fail at startup.
+- Revoke an app by removing its entry and redeploying.
+
+Create a key for an app:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"   # raw key -> the app's own .env
+python -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" '<raw key>'
+```
+
+Add `SERVICE_API_KEYS=<app-name>:<hash>` to the Vercel Production
+environment and redeploy. Workers, task submission and claim routes are still
+on their MVP credentials; extending these keys to them is the next milestone.
+
 ## One-time hosted setup
 
 Complete these steps in this order to avoid publishing a login page before its
