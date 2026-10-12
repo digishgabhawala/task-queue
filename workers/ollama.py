@@ -97,18 +97,21 @@ class OllamaManager:
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
 
-    def unload(self) -> None:
-        """Free the model's memory -- only if this worker loaded it."""
+    def unload(self) -> bool:
+        """Free the model's memory -- only if this worker loaded it. Returns
+        True if a model of ours was unloaded (its memory is now coming back)."""
         with self._lock:
             model, self._owned = self._owned, None
             if model is None:
-                return
+                return False
             try:
                 self._http.post(f"{self.url}/api/generate",
                                 json={"model": model, "keep_alive": 0}, timeout=30)
                 print(f"unloaded Ollama model {model}")
+                return True
             except httpx.HTTPError as e:
                 print(f"could not unload Ollama model {model}: {e}")
+                return False
 
     def maybe_unload_idle(self) -> bool:
         if self._owned is None or self._clock() - self._last_used < self.idle_seconds:

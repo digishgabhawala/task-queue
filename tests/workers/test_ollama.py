@@ -170,3 +170,11 @@ def test_untagged_model_name_matches_latest_tag():
     m = OllamaManager("http://ollama", "qwen3", http=fake, clock=Clock())
     m.chat({"messages": [{"role": "user", "content": "x"}]})
     assert m.details() == {"model": "qwen3", "loaded": True, "managed": False}
+
+
+def test_unload_reports_whether_it_freed_anything():
+    fake, clock = FakeOllama(), Clock()
+    m = manager(fake, clock)
+    assert m.unload() is False          # nothing of ours loaded
+    m.chat(PAYLOAD)
+    assert m.unload() is True           # unloaded our own model
