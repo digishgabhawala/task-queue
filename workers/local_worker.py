@@ -60,8 +60,31 @@ def image_available() -> bool:
 
 def claim_next_task(client, worker_id: str, task_types: list[str]) -> dict | None:
     # One claim across every configured type: the queue returns the oldest
-    # waiting task, whatever its type.
-    return client.claim_next(task_types, worker_id)
+    # waiting task, whatever its type. A network blip or slow hosted queue
+    # (found live: a ReadTimeout killed the worker) just means "try again".
+    try:
+        return client.claim_next(task_types, worker_id)
+    except httpx.HTTPError as e:
+        print(f"claim failed, retrying next poll: {e!r}")
+        return None
+
+
+def report_result(client, task: dict, result: dict) -> None:
+    try:
+        client.complete_task(task["id"], task["claim_token"], result)
+        print(f"completed {task['task_type']} {task['id']}")
+    except httpx.HTTPError as e:
+        # 409 = lease expired and someone else took over; network errors =
+        # the queue is unreachable. Either way the worker keeps going; an
+        # unreported task is reclaimed once its lease expires.
+        print(f"could not report completion for {task['id']}: {e!r}")
+
+
+def report_failure(client, task: dict, error: Exception) -> None:
+    try:
+        client.fail_task(task["id"], task["claim_token"], str(error))
+    except httpx.HTTPError as e:
+        print(f"could not report failure for {task['id']}: {e!r}")
 
 
 def run_task(client, task: dict, heartbeat, supervisor, ollama) -> dict:
@@ -146,20 +169,11 @@ def main() -> None:
             result = run_task(client, task, heartbeat, supervisor, ollama)
         except Exception as e:
             print(f"work failed for {task['id']}: {e}")
-            try:
-                client.fail_task(task["id"], task["claim_token"], str(e))
-            except httpx.HTTPStatusError as report_err:
-                print(f"could not report failure for {task['id']} (claim likely "
-                      f"expired/reclaimed): {report_err}")
+            report_failure(client, task, e)
             heartbeat.update(state="idle")
             continue
 
-        try:
-            client.complete_task(task["id"], task["claim_token"], result)
-            print(f"completed {task['task_type']} {task['id']}")
-        except httpx.HTTPStatusError as e:
-            print(f"could not report completion for {task['id']} (claim likely "
-                  f"expired/reclaimed): {e}")
+        report_result(client, task, result)
         heartbeat.update(state="idle")
 
 
