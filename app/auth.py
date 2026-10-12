@@ -7,15 +7,18 @@ long-running worker process.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from dataclasses import dataclass
 
 import httpx
 from fastapi import Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import settings
 
 _bearer = HTTPBearer(auto_error=False)
+_service_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 @dataclass(frozen=True)
@@ -90,3 +93,29 @@ async def require_admin(user: AuthUser = Depends(current_user)) -> AuthUser:
     if settings.auth_enabled and user.email.casefold() not in settings.admin_emails:
         raise HTTPException(403, "This account does not have Task Queue admin access")
     return user
+
+
+def _service_for_key(raw_key: str) -> str | None:
+    digest = hashlib.sha256(raw_key.encode()).hexdigest()
+    for known, name in settings.service_key_hashes.items():
+        if hmac.compare_digest(digest, known):
+            return name
+    return None
+
+
+async def require_admin_or_service(
+    api_key: str | None = Depends(_service_key),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> AuthUser:
+    """Admin browser session OR a configured machine key (X-API-Key).
+
+    Machine clients (other apps) must never borrow a human session; they get
+    their own revocable key instead (see SERVICE_API_KEYS)."""
+    if not settings.auth_enabled:
+        return AuthUser(id="auth-disabled", email="local-admin@localhost")
+    if api_key:
+        name = _service_for_key(api_key)
+        if name is None:
+            raise HTTPException(401, "Invalid API key")
+        return AuthUser(id=f"service:{name}", email=f"{name}@service")
+    return await require_admin(await current_user(credentials))

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFi
 from sqlalchemy.orm import Session
 
 from .. import storage
-from ..auth import AuthUser, public_auth_config, require_admin
+from ..auth import AuthUser, public_auth_config, require_admin, require_admin_or_service
 from ..db import get_db
 from ..models import Artifact, Task, Worker
 from ..schemas import (
@@ -132,7 +132,7 @@ def worker_heartbeat(worker_id: str, req: WorkerHeartbeatRequest,
 @router.get("/workers")
 def list_workers(
     db: Session = Depends(get_db),
-    _admin: AuthUser = Depends(require_admin),
+    _caller: AuthUser = Depends(require_admin_or_service),
 ):
     return [_serialize_worker(w) for w in wsvc.list_workers(db)]
 

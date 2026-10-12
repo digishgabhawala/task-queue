@@ -2,6 +2,8 @@
 sibling repos (character-forge-v2, linkedin-content-agent)."""
 from __future__ import annotations
 
+import re
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,6 +32,11 @@ class Settings(BaseSettings):
     # configured. When enabled, the admin allow-list is mandatory.
     auth_enabled: bool = False
     auth_admin_emails: str = ""
+    # Machine credentials for apps (e.g. linkedin-content-agent) that read
+    # admin-only routes: comma list of "name:sha256-hex-of-key". Only hashes
+    # are configured, so the raw key lives solely with the app. Remove an
+    # entry to revoke that app.
+    service_api_keys: str = ""
 
     default_lease_minutes: int = 60
     default_retention_hours: int = 48
@@ -47,8 +54,22 @@ class Settings(BaseSettings):
             if email.strip()
         )
 
+    @property
+    def service_key_hashes(self) -> dict[str, str]:
+        """{sha256 hex of key: service name}."""
+        hashes = {}
+        for entry in self.service_api_keys.split(","):
+            if entry.strip():
+                name, _, digest = entry.strip().partition(":")
+                hashes[digest.strip().lower()] = name.strip()
+        return hashes
+
     @model_validator(mode="after")
     def validate_auth_configuration(self) -> Settings:
+        for entry in filter(None, (e.strip() for e in self.service_api_keys.split(","))):
+            name, _, digest = entry.partition(":")
+            if not name.strip() or not re.fullmatch(r"[0-9a-fA-F]{64}", digest.strip()):
+                raise ValueError("SERVICE_API_KEYS entries must be name:<sha256 hex of the key>")
         if self.auth_enabled and not self.supabase_publishable_key:
             raise ValueError("SUPABASE_PUBLISHABLE_KEY is required when AUTH_ENABLED=true")
         if self.auth_enabled and not self.admin_emails:

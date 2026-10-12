@@ -4,7 +4,16 @@ LOCKED claim logic gets genuinely exercised, not something SQLite could ever
 verify the same way. Each test gets a clean slate via truncation rather than
 transaction-rollback, since task_service's functions own their own commits
 (same convention as the other two repos' services)."""
+import os
 from urllib.parse import urlparse
+
+# Auth is opt-in per test (see test_auth.py / test_service_keys.py, which
+# enable it explicitly). A developer's .env may carry the production auth
+# settings; environment variables beat .env, so neutralise them before the
+# app's settings load -- otherwise unrelated tests silently run with auth on.
+for _key, _value in (("AUTH_ENABLED", "false"), ("AUTH_ADMIN_EMAILS", ""),
+                     ("SUPABASE_PUBLISHABLE_KEY", ""), ("SERVICE_API_KEYS", "")):
+    os.environ[_key] = _value
 
 import pytest
 from sqlalchemy import text
