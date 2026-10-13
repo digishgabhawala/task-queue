@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     # are configured, so the raw key lives solely with the app. Remove an
     # entry to revoke that app.
     service_api_keys: str = ""
+    # Separate worker credentials prevent a worker key from submitting tasks
+    # or reading producer results. Use one named hash per machine/session.
+    worker_api_keys: str = ""
+    # Compatibility rollout: missing keys are accepted while false, but any
+    # key that is presented is still validated against its route class.
+    machine_auth_required: bool = False
 
     default_lease_minutes: int = 60
     default_retention_hours: int = 48
@@ -56,9 +62,18 @@ class Settings(BaseSettings):
 
     @property
     def service_key_hashes(self) -> dict[str, str]:
-        """{sha256 hex of key: service name}."""
+        """Producer keys as {sha256 hex: service name}."""
+        return self._named_key_hashes(self.service_api_keys)
+
+    @property
+    def worker_key_hashes(self) -> dict[str, str]:
+        """Worker keys as {sha256 hex: worker name}."""
+        return self._named_key_hashes(self.worker_api_keys)
+
+    @staticmethod
+    def _named_key_hashes(configured: str) -> dict[str, str]:
         hashes = {}
-        for entry in self.service_api_keys.split(","):
+        for entry in configured.split(","):
             if entry.strip():
                 name, _, digest = entry.strip().partition(":")
                 hashes[digest.strip().lower()] = name.strip()
@@ -66,10 +81,20 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_auth_configuration(self) -> Settings:
-        for entry in filter(None, (e.strip() for e in self.service_api_keys.split(","))):
-            name, _, digest = entry.partition(":")
-            if not name.strip() or not re.fullmatch(r"[0-9a-fA-F]{64}", digest.strip()):
-                raise ValueError("SERVICE_API_KEYS entries must be name:<sha256 hex of the key>")
+        for setting_name, configured in (
+            ("SERVICE_API_KEYS", self.service_api_keys),
+            ("WORKER_API_KEYS", self.worker_api_keys),
+        ):
+            for entry in filter(None, (e.strip() for e in configured.split(","))):
+                name, _, digest = entry.partition(":")
+                if not name.strip() or not re.fullmatch(r"[0-9a-fA-F]{64}", digest.strip()):
+                    raise ValueError(
+                        f"{setting_name} entries must be name:<sha256 hex of the key>"
+                    )
+        if self.machine_auth_required and not self.service_key_hashes:
+            raise ValueError("SERVICE_API_KEYS is required when MACHINE_AUTH_REQUIRED=true")
+        if self.machine_auth_required and not self.worker_key_hashes:
+            raise ValueError("WORKER_API_KEYS is required when MACHINE_AUTH_REQUIRED=true")
         if self.auth_enabled and not self.supabase_publishable_key:
             raise ValueError("SUPABASE_PUBLISHABLE_KEY is required when AUTH_ENABLED=true")
         if self.auth_enabled and not self.admin_emails:

@@ -6,7 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFi
 from sqlalchemy.orm import Session
 
 from .. import storage
-from ..auth import AuthUser, public_auth_config, require_admin, require_admin_or_service
+from ..auth import (
+    AuthUser,
+    public_auth_config,
+    require_admin,
+    require_admin_or_service,
+    require_producer,
+    require_worker,
+)
 from ..db import get_db
 from ..models import Artifact, Task, Worker
 from ..schemas import (
@@ -95,7 +102,11 @@ def auth_me(user: AuthUser = Depends(require_admin)):
 
 
 @router.post("/workers/register")
-def register_worker(req: WorkerRegisterRequest, db: Session = Depends(get_db)):
+def register_worker(
+    req: WorkerRegisterRequest,
+    db: Session = Depends(get_db),
+    _worker: AuthUser = Depends(require_worker),
+):
     worker = wsvc.register_worker(
         db,
         worker_id=req.worker_id,
@@ -109,7 +120,8 @@ def register_worker(req: WorkerRegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/workers/{worker_id}/heartbeat")
 def worker_heartbeat(worker_id: str, req: WorkerHeartbeatRequest,
-                     db: Session = Depends(get_db)):
+                     db: Session = Depends(get_db),
+                     _worker: AuthUser = Depends(require_worker)):
     try:
         worker = wsvc.heartbeat(
             db,
@@ -138,7 +150,11 @@ def list_workers(
 
 
 @router.post("/tasks")
-def submit_task(req: TaskSubmitRequest, db: Session = Depends(get_db)):
+def submit_task(
+    req: TaskSubmitRequest,
+    db: Session = Depends(get_db),
+    _producer: AuthUser = Depends(require_producer),
+):
     task = tsvc.submit_task(db, req.task_type, req.payload, req.lease_minutes, req.retention_hours)
     return _serialize_task(task)
 
@@ -157,7 +173,8 @@ def list_tasks(
 def claim_next(task_types: str = Query(..., description="comma-separated task_type list"),
               worker_id: str | None = None,
               lease_minutes: int | None = Query(None, gt=0),
-              db: Session = Depends(get_db)):
+              db: Session = Depends(get_db),
+              _worker: AuthUser = Depends(require_worker)):
     claimed = tsvc.claim_next(db, task_types.split(","), worker_id or f"worker-{uuid.uuid4().hex[:8]}",
                               lease_minutes)
     if claimed is None:
@@ -166,7 +183,11 @@ def claim_next(task_types: str = Query(..., description="comma-separated task_ty
 
 
 @router.get("/tasks/{task_id}")
-def get_task(task_id: str, db: Session = Depends(get_db)):
+def get_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+    _producer: AuthUser = Depends(require_producer),
+):
     try:
         return _serialize_task(tsvc.get_task(db, task_id))
     except tsvc.TaskServiceError as e:
@@ -174,7 +195,12 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/tasks/{task_id}/complete")
-def complete_task(task_id: str, req: TaskCompleteRequest, db: Session = Depends(get_db)):
+def complete_task(
+    task_id: str,
+    req: TaskCompleteRequest,
+    db: Session = Depends(get_db),
+    _worker: AuthUser = Depends(require_worker),
+):
     try:
         return _serialize_task(tsvc.complete_task(db, task_id, req.claim_token, req.result))
     except tsvc.TaskServiceError as e:
@@ -182,7 +208,12 @@ def complete_task(task_id: str, req: TaskCompleteRequest, db: Session = Depends(
 
 
 @router.post("/tasks/{task_id}/fail")
-def fail_task(task_id: str, req: TaskFailRequest, db: Session = Depends(get_db)):
+def fail_task(
+    task_id: str,
+    req: TaskFailRequest,
+    db: Session = Depends(get_db),
+    _worker: AuthUser = Depends(require_worker),
+):
     try:
         return _serialize_task(tsvc.fail_task(db, task_id, req.claim_token, req.error))
     except tsvc.TaskServiceError as e:
@@ -190,7 +221,11 @@ def fail_task(task_id: str, req: TaskFailRequest, db: Session = Depends(get_db))
 
 
 @router.post("/artifacts")
-async def upload_artifact(file: UploadFile, db: Session = Depends(get_db)):
+async def upload_artifact(
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    _worker: AuthUser = Depends(require_worker),
+):
     content = await file.read()
     content_type = file.content_type or "application/octet-stream"
     artifact = asvc.upload_artifact(db, content, content_type)
@@ -198,7 +233,11 @@ async def upload_artifact(file: UploadFile, db: Session = Depends(get_db)):
 
 
 @router.get("/artifacts/{artifact_id}")
-def get_artifact(artifact_id: str, db: Session = Depends(get_db)):
+def get_artifact(
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    _producer: AuthUser = Depends(require_producer),
+):
     try:
         return _serialize_artifact(asvc.get_artifact(db, artifact_id))
     except asvc.ArtifactServiceError as e:

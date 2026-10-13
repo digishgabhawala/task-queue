@@ -41,7 +41,7 @@ def test_valid_service_key_identifies_the_app(monkeypatch):
     _enable(monkeypatch)
     resp = _probe_app().get("/probe", headers={"X-API-Key": RAW_KEY})
     assert resp.status_code == 200
-    assert resp.json()["id"] == "service:linkedin-content-agent"
+    assert resp.json()["id"] == "producer:linkedin-content-agent"
 
 
 def test_wrong_service_key_is_rejected(monkeypatch):
@@ -76,10 +76,31 @@ def test_worker_list_route_accepts_service_keys(monkeypatch):
 
 
 def test_keys_are_configured_as_name_and_sha256_hash():
-    s = Settings(_env_file=None, service_api_keys=f"linkedin:{HASH}, other:{'b' * 64}")
+    s = Settings(
+        _env_file=None,
+        service_api_keys=f"linkedin:{HASH}, other:{'b' * 64}",
+        worker_api_keys=f"laptop:{'c' * 64}",
+    )
     assert s.service_key_hashes == {HASH: "linkedin", "b" * 64: "other"}
+    assert s.worker_key_hashes == {"c" * 64: "laptop"}
 
 
 def test_malformed_key_configuration_fails_at_startup():
     with pytest.raises(ValueError, match="SERVICE_API_KEYS"):
         Settings(_env_file=None, service_api_keys="linkedin:plaintext-key")
+
+
+def test_malformed_worker_key_configuration_fails_at_startup():
+    with pytest.raises(ValueError, match="WORKER_API_KEYS"):
+        Settings(_env_file=None, worker_api_keys="laptop:plaintext-key")
+
+
+@pytest.mark.parametrize("missing", ["service_api_keys", "worker_api_keys"])
+def test_enforcement_requires_both_key_classes(missing):
+    values = {
+        "service_api_keys": f"producer:{'a' * 64}",
+        "worker_api_keys": f"worker:{'b' * 64}",
+    }
+    values[missing] = ""
+    with pytest.raises(ValueError, match=missing.upper()):
+        Settings(_env_file=None, machine_auth_required=True, **values)

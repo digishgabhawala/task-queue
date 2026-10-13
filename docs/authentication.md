@@ -1,7 +1,7 @@
 # Supabase authentication
 
-Status: application integration complete; hosted-project activation requires
-the administrator user and deployment environment variables below.
+Status: human authentication is active; separate producer and worker machine
+credentials are implemented with a compatibility switch for staged rollout.
 
 ## Current scope
 
@@ -14,35 +14,49 @@ email and password:
 - `GET /api/workers`, `GET /api/tasks`, and `GET /api/auth/me` require an
   authenticated administrator when `AUTH_ENABLED=true`.
 - Health checks and static assets remain public.
-- Producer, worker, artifact, task-submission, claim, and task-result routes
-  retain their current MVP credentials and behavior. They are not yet safe for
-  untrusted multi-user traffic.
+- Machine routes use `X-API-Key`, with different key sets for producers and
+  workers. Human bearer sessions do not authorize worker routes.
 
-Human browser sessions must never be copied into workers. Worker enrollment
-and revocable machine credentials are the next authentication milestone.
+This establishes role separation but not tenant isolation. Tasks do not yet
+have owner IDs, and artifact URLs are still public once known.
 
-## Machine (service) API keys
+## Machine API keys
 
-Apps that need an admin-only read -- today `linkedin-content-agent` reading
-`GET /api/workers` for its worker badge and memory pre-check -- use their own
-revocable key, never a human session:
+Each machine client keeps one raw secret in its own environment. The queue API
+stores only SHA-256 hashes and compares the hash of each presented key using a
+constant-time comparison.
 
-- The app sends `X-API-Key: <raw key>`; `GET /api/workers` accepts either an
-  admin Bearer session or a configured key (`require_admin_or_service`).
-- The server only stores **hashes**: `SERVICE_API_KEYS` is a comma list of
-  `name:<sha256 hex of the key>`. Malformed entries fail at startup.
-- Revoke an app by removing its entry and redeploying.
+- Producer apps use raw `TASK_QUEUE_API_KEY` values whose hashes are listed in
+  server-side `SERVICE_API_KEYS`. Producers may submit a task, fetch one task,
+  fetch one artifact, and read worker availability. `GET /api/workers` also
+  accepts a human admin session for the dashboard.
+- Workers use raw `WORKER_API_KEY` values whose hashes are listed separately
+  in server-side `WORKER_API_KEYS`. Workers may register, heartbeat, claim,
+  complete/fail, and upload artifacts.
+- A producer key is rejected from worker routes and a worker key is rejected
+  from producer routes. Removing a named hash and redeploying revokes it.
+- Both `/api/*` and `/api/queue/*` mounts apply the same dependencies.
 
-Create a key for an app:
+Create an independent key for each app or worker:
 
 ```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"   # raw key -> the app's own .env
+python -c "import secrets; print(secrets.token_urlsafe(32))"   # raw key -> that client's .env
 python -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" '<raw key>'
 ```
 
-Add `SERVICE_API_KEYS=<app-name>:<hash>` to the Vercel Production
-environment and redeploy. Workers, task submission and claim routes are still
-on their MVP credentials; extending these keys to them is the next milestone.
+The API environment format is a comma-separated name/hash map:
+
+```text
+SERVICE_API_KEYS=linkedin-content-agent:<producer-hash>,another-app:<producer-hash>
+WORKER_API_KEYS=digish-macbook:<worker-hash>,colab-worker:<worker-hash>
+MACHINE_AUTH_REQUIRED=true
+```
+
+Malformed entries, or enforcement without both key classes, fail closed at
+startup. During a coordinated migration only, set
+`MACHINE_AUTH_REQUIRED=false`: a missing key is temporarily accepted, while a
+present but invalid/wrong-role key is still rejected. Give every client its
+raw key before switching the server to `true`.
 
 ## One-time hosted setup
 
@@ -84,14 +98,17 @@ After deployment:
 2. Confirm an incorrect password shows a generic error and no account details.
 3. Sign in with the created administrator and verify workers/tasks load.
 4. Sign out and confirm protected data disappears.
-5. Request `/api/workers` without a bearer token and confirm HTTP `401`.
-6. Confirm `/api/health` still returns HTTP `200`.
+5. Request each machine route without `X-API-Key` and confirm HTTP `401`.
+6. Confirm producer and worker keys work only on their respective routes.
+7. Confirm `/api/health` still returns HTTP `200`.
 
 ## Local behavior
 
 Authentication defaults to disabled so existing local workers and tests keep
-working. To exercise local auth, create a user through local Supabase Studio,
-then set the three variables above using the local publishable/anon key.
+working. Machine authentication also defaults to compatibility mode locally.
+To exercise the production posture, configure both hashed key sets and set
+`MACHINE_AUTH_REQUIRED=true`; give the producer client `TASK_QUEUE_API_KEY`
+and the worker `WORKER_API_KEY`.
 
 The static admin page loads a version-pinned Supabase browser SDK. The browser
 receives only the publishable key. The FastAPI backend verifies each presented
@@ -100,8 +117,8 @@ access token with Supabase Auth and then applies the administrator allow-list.
 ## Later milestones
 
 - Add owner IDs to tasks and workers.
-- Create one-time worker enrollment and revocable worker credentials.
-- Authenticate producers and enforce task ownership.
+- Create one-time worker enrollment/rotation rather than manual key setup.
+- Add producer identity and enforce task ownership.
 - Replace public artifact URLs with authorized or short-lived signed access.
 - Enable Google inside the same Supabase Auth project when desired; existing
   ownership continues to use the Supabase user ID (`sub`).

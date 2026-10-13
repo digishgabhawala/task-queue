@@ -5,11 +5,18 @@ used for Ollama calls elsewhere in this workspace.
 
 Usage (producer):
     from python_client import TaskQueueClient
-    client = TaskQueueClient("http://127.0.0.1:8000")
+    client = TaskQueueClient(
+        "http://127.0.0.1:8000",
+        producer_api_key=os.environ["TASK_QUEUE_API_KEY"],
+    )
     task = client.submit_task("image_generation", {"character_id": "gtee_dev", ...})
     result = client.wait_for_task(task["id"])  # polls until done/failed
 
 Usage (worker):
+    client = TaskQueueClient(
+        "http://127.0.0.1:8000",
+        worker_api_key=os.environ["WORKER_API_KEY"],
+    )
     while True:
         task = client.claim_next(["image_generation"], worker_id="my-laptop")
         if task is None:
@@ -29,9 +36,25 @@ import httpx
 
 
 class TaskQueueClient:
-    def __init__(self, base_url: str, timeout: float = 30.0):
+    def __init__(self, base_url: str, timeout: float = 30.0,
+                 producer_api_key: str | None = None,
+                 worker_api_key: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.producer_api_key = producer_api_key
+        self.worker_api_key = worker_api_key
+
+    @staticmethod
+    def _headers(api_key: str | None) -> dict[str, str]:
+        return {"X-API-Key": api_key} if api_key else {}
+
+    @property
+    def producer_headers(self) -> dict[str, str]:
+        return self._headers(self.producer_api_key)
+
+    @property
+    def worker_headers(self) -> dict[str, str]:
+        return self._headers(self.worker_api_key)
 
     def submit_task(self, task_type: str, payload: dict,
                     lease_minutes: int | None = None,
@@ -39,12 +62,16 @@ class TaskQueueClient:
         resp = httpx.post(f"{self.base_url}/api/tasks", json={
             "task_type": task_type, "payload": payload,
             "lease_minutes": lease_minutes, "retention_hours": retention_hours,
-        }, timeout=self.timeout)
+        }, headers=self.producer_headers, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()
 
     def get_task(self, task_id: str) -> dict:
-        resp = httpx.get(f"{self.base_url}/api/tasks/{task_id}", timeout=self.timeout)
+        resp = httpx.get(
+            f"{self.base_url}/api/tasks/{task_id}",
+            headers=self.producer_headers,
+            timeout=self.timeout,
+        )
         resp.raise_for_status()
         return resp.json()
 
@@ -56,7 +83,7 @@ class TaskQueueClient:
             "session_id": session_id,
             "capabilities": capabilities,
             "version": version,
-        }, timeout=self.timeout)
+        }, headers=self.worker_headers, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()
 
@@ -81,6 +108,7 @@ class TaskQueueClient:
                 "progress_total": progress_total,
                 "details": details,
             },
+            headers=self.worker_headers,
             timeout=self.timeout,
         )
         resp.raise_for_status()
@@ -107,7 +135,12 @@ class TaskQueueClient:
         params = {"task_types": ",".join(task_types), "worker_id": worker_id}
         if lease_minutes is not None:
             params["lease_minutes"] = lease_minutes
-        resp = httpx.get(f"{self.base_url}/api/tasks/next", params=params, timeout=self.timeout)
+        resp = httpx.get(
+            f"{self.base_url}/api/tasks/next",
+            params=params,
+            headers=self.worker_headers,
+            timeout=self.timeout,
+        )
         if resp.status_code == 204:
             return None
         resp.raise_for_status()
@@ -116,25 +149,30 @@ class TaskQueueClient:
     def complete_task(self, task_id: str, claim_token: str, result: dict) -> dict:
         resp = httpx.post(f"{self.base_url}/api/tasks/{task_id}/complete", json={
             "claim_token": claim_token, "result": result,
-        }, timeout=self.timeout)
+        }, headers=self.worker_headers, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()
 
     def fail_task(self, task_id: str, claim_token: str, error: str) -> dict:
         resp = httpx.post(f"{self.base_url}/api/tasks/{task_id}/fail", json={
             "claim_token": claim_token, "error": error,
-        }, timeout=self.timeout)
+        }, headers=self.worker_headers, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()
 
     def upload_artifact(self, content: bytes, content_type: str, filename: str = "file") -> dict:
         resp = httpx.post(f"{self.base_url}/api/artifacts",
                           files={"file": (filename, content, content_type)},
+                          headers=self.worker_headers,
                           timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()
 
     def get_artifact(self, artifact_id: str) -> dict:
-        resp = httpx.get(f"{self.base_url}/api/artifacts/{artifact_id}", timeout=self.timeout)
+        resp = httpx.get(
+            f"{self.base_url}/api/artifacts/{artifact_id}",
+            headers=self.producer_headers,
+            timeout=self.timeout,
+        )
         resp.raise_for_status()
         return resp.json()
