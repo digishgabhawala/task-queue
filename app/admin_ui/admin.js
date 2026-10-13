@@ -1,4 +1,6 @@
 const REFRESH_INTERVAL_MS = 15000;
+const API_BASE = document.querySelector('meta[name="task-queue-api-base"]')?.content || '/api/queue';
+const apiUrl = path => `${API_BASE.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
 
 const elements = {
   account: document.querySelector('#account'),
@@ -324,8 +326,8 @@ const refresh = async () => {
   elements.refresh.querySelector('span').textContent = 'Refreshing';
 
   const [workersOk, tasksOk] = await Promise.all([
-    loadResource('workers', '/api/workers', renderWorkers, elements.workers, elements.workersMessage),
-    loadResource('tasks', '/api/tasks', renderTasks, elements.tasks, elements.tasksMessage),
+    loadResource('workers', apiUrl('workers'), renderWorkers, elements.workers, elements.workersMessage),
+    loadResource('tasks', apiUrl('tasks'), renderTasks, elements.tasks, elements.tasksMessage),
   ]);
 
   updateMetrics();
@@ -396,7 +398,7 @@ const verifyAdminSession = async session => {
   setAuthError('');
   setAuthStatus('Confirming access…');
   try {
-    const response = await fetch('/api/auth/me', {
+    const response = await fetch(apiUrl('auth/me'), {
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${accessToken}`,
@@ -457,7 +459,7 @@ elements.signOut.addEventListener('click', async () => {
 
 const initializeAuth = async () => {
   try {
-    const response = await fetch('/api/auth/config', { headers: { Accept: 'application/json' } });
+    const response = await fetch(apiUrl('auth/config'), { headers: { Accept: 'application/json' } });
     if (!response.ok) throw new Error('Auth configuration unavailable');
     const config = await response.json();
 

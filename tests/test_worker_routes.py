@@ -60,12 +60,31 @@ def test_admin_page_renders():
     assert "Task Queue" in resp.text
     assert "AI Bharatiyaa" in resp.text
     assert 'aria-live="polite"' in resp.text
-    assert "/admin-assets/tokens.css" in resp.text
-    assert "/admin-assets/admin.css" in resp.text
-    assert "/admin-assets/admin.js" in resp.text
+    assert "/queue/admin-assets/tokens.css" in resp.text
+    assert "/queue/admin-assets/admin.css" in resp.text
+    assert "/queue/admin-assets/admin.js" in resp.text
+
+
+def test_suite_queue_page_renders():
+    resp = client.get("/queue")
+    assert resp.status_code == 200
+    assert "Task Queue" in resp.text
+    assert 'content="/api/queue"' in resp.text
 
 
 def test_admin_assets_are_served():
     assert client.get("/admin-assets/admin.css").status_code == 200
     assert client.get("/admin-assets/admin.js").status_code == 200
     assert client.get("/admin-assets/tokens.css").status_code == 200
+
+
+def test_suite_queue_assets_are_served():
+    assert client.get("/queue/admin-assets/admin.css").status_code == 200
+    assert client.get("/queue/admin-assets/admin.js").status_code == 200
+    assert client.get("/queue/admin-assets/tokens.css").status_code == 200
+
+
+def test_root_redirects_to_suite_queue_path():
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/queue"
