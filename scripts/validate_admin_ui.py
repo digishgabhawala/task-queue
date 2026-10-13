@@ -43,7 +43,7 @@ class AdminHTMLParser(HTMLParser):
 
         for attribute in ("href", "src"):
             value = values.get(attribute) or ""
-            if value.startswith("/admin-assets/"):
+            if value.startswith("/queue/admin-assets/"):
                 self.local_assets.append(value)
 
 
@@ -91,12 +91,12 @@ def main() -> None:
         errors.append(f"{parser.buttons_without_type} button(s) do not declare a type")
 
     for asset in parser.local_assets:
-        asset_path = UI_DIR / asset.removeprefix("/admin-assets/")
+        asset_path = UI_DIR / asset.removeprefix("/queue/admin-assets/")
         if not asset_path.is_file():
             errors.append(f"missing local asset referenced by HTML: {asset}")
 
-    token_link = html.find('href="/admin-assets/tokens.css"')
-    component_link = html.find('href="/admin-assets/admin.css"')
+    token_link = html.find('href="/queue/admin-assets/tokens.css"')
+    component_link = html.find('href="/queue/admin-assets/admin.css"')
     if token_link < 0 or component_link < 0 or token_link > component_link:
         errors.append("tokens.css must be loaded before admin.css")
 

@@ -81,3 +81,14 @@ def test_public_auth_config_never_exposes_service_key(monkeypatch):
         "supabase_publishable_key": "sb_publishable_test",
     }
     assert "service" not in response.text.casefold()
+
+
+def test_suite_scoped_auth_config_matches_legacy_route(monkeypatch):
+    _enable_auth(monkeypatch)
+    monkeypatch.setattr(auth.settings, "supabase_url", "https://example.supabase.co")
+
+    legacy = client.get("/api/auth/config")
+    scoped = client.get("/api/queue/auth/config")
+
+    assert scoped.status_code == 200
+    assert scoped.json() == legacy.json()
