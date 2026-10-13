@@ -233,6 +233,15 @@ at or below 60 seconds with the current two-minute offline threshold.
 - [ ] Add owner-aware producer authentication, worker enrollment, revocable
   machine credentials, and private artifact delivery before this becomes a
   multi-user or externally shared service.
+- [ ] **Enable Row Level Security on the queue tables** (`tasks`, `workers`,
+  `artifacts` in `public`). Without it Supabase's REST API serves them to
+  anyone holding the browser-safe publishable key (verified 2026-10-12: a
+  task id was readable). RLS on with no policies is enough -- the backend
+  connects as the table owner, which bypasses RLS.
+- [ ] **Require service keys on the machine routes**: task submit/read and
+  artifact routes accept only a producer's `X-API-Key`; worker register,
+  heartbeat, claim, complete, fail and artifact upload accept only a worker
+  key (separate from producer keys and human sessions).
 - [ ] Resume the [Future MVP UI backlog](docs/future-ui-mvp.md) after login,
   authorization, and user management are available.
 - [ ] Define retention or manual cleanup for historical worker registrations;
