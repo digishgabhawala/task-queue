@@ -1,9 +1,4 @@
-"""Supabase user authentication for human-facing Task Queue routes.
-
-Worker and producer credentials are deliberately a separate milestone. A
-browser access token proves the human user; it must not be copied into a
-long-running worker process.
-"""
+"""Human authentication and segregated producer/worker machine credentials."""
 
 from __future__ import annotations
 
@@ -95,12 +90,41 @@ async def require_admin(user: AuthUser = Depends(current_user)) -> AuthUser:
     return user
 
 
-def _service_for_key(raw_key: str) -> str | None:
+def _name_for_key(raw_key: str, configured_hashes: dict[str, str]) -> str | None:
     digest = hashlib.sha256(raw_key.encode()).hexdigest()
-    for known, name in settings.service_key_hashes.items():
+    for known, name in configured_hashes.items():
         if hmac.compare_digest(digest, known):
             return name
     return None
+
+
+def _machine_user(kind: str, name: str) -> AuthUser:
+    return AuthUser(id=f"{kind}:{name}", email=f"{name}@{kind}")
+
+
+def _require_machine_key(
+    kind: str,
+    api_key: str | None,
+    configured_hashes: dict[str, str],
+) -> AuthUser:
+    if api_key:
+        name = _name_for_key(api_key, configured_hashes)
+        if name is None:
+            raise HTTPException(401, "Invalid API key")
+        return _machine_user(kind, name)
+    if settings.machine_auth_required:
+        raise HTTPException(401, "API key required")
+    return _machine_user(kind, "rollout-anonymous")
+
+
+async def require_producer(api_key: str | None = Depends(_service_key)) -> AuthUser:
+    """Require a producer key, subject to the temporary rollout switch."""
+    return _require_machine_key("producer", api_key, settings.service_key_hashes)
+
+
+async def require_worker(api_key: str | None = Depends(_service_key)) -> AuthUser:
+    """Require a worker key; human and producer credentials never qualify."""
+    return _require_machine_key("worker", api_key, settings.worker_key_hashes)
 
 
 async def require_admin_or_service(
@@ -111,11 +135,11 @@ async def require_admin_or_service(
 
     Machine clients (other apps) must never borrow a human session; they get
     their own revocable key instead (see SERVICE_API_KEYS)."""
-    if not settings.auth_enabled:
-        return AuthUser(id="auth-disabled", email="local-admin@localhost")
     if api_key:
-        name = _service_for_key(api_key)
+        name = _name_for_key(api_key, settings.service_key_hashes)
         if name is None:
             raise HTTPException(401, "Invalid API key")
-        return AuthUser(id=f"service:{name}", email=f"{name}@service")
+        return _machine_user("producer", name)
+    if not settings.auth_enabled:
+        return AuthUser(id="auth-disabled", email="local-admin@localhost")
     return await require_admin(await current_user(credentials))

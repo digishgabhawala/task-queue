@@ -18,8 +18,11 @@ duplicate IDs, missing local assets, and basic document metadata mistakes.
 
 Authentication tests cover missing bearer credentials, administrator
 allow-list enforcement, safe public configuration, and the absence of the
-server-only service key from browser configuration. Hosted activation and
-email/password login are verified with the checklist in
+server-only service key from browser configuration. The machine-auth matrix
+also covers every producer/worker route with a missing key, a valid key of the
+wrong class, and the correct key under both `/api` and `/api/queue`. Client
+tests ensure credentials are never sent across role boundaries. Hosted
+activation and email/password login are verified with the checklist in
 [`docs/authentication.md`](docs/authentication.md).
 
 `tests/` runs against a **real local Postgres** (`supabase start`'s Docker
@@ -32,11 +35,10 @@ lease is persisted and applied when a worker later claims the task.
 `test_artifact_service.py`
 uploads/downloads real bytes through the local Supabase Storage API.
 
-**What automated tests don't cover yet**: the HTTP routes themselves
-(`app/api/routes.py`) -- tests exercise the service layer directly, not
-through FastAPI's `TestClient`. The end-to-end path (real HTTP submit ->
-claim -> complete -> artifact retrieval, and the `image_worker.py` mock-mode
-loop specifically) is verified live instead, see below.
+The complete business workflow (real HTTP submit -> claim -> complete ->
+artifact retrieval, including the `image_worker.py` mock-mode loop) is still
+verified live rather than duplicated as one monolithic automated test; its
+individual HTTP authorization and service operations are automated.
 
 The worker-registration additions have service tests for registration,
 session replacement, heartbeat-based progress/lease renewal, claim ownership,
@@ -68,6 +70,13 @@ pytest tests/workers` (nothing connects to them).
 - [x] Local Data API verification on 2026-10-13: publishable-key GET and POST
       against `rest/v1/tasks` both returned `401`, while FastAPI inserted the
       same task successfully. The full application suite passed: 139 tests.
+- [x] Separate producer/worker machine authentication verified on 2026-10-13:
+      168 local tests passed against real Postgres and Storage; production
+      returned `401` for unauthenticated submit, claim, and artifact upload
+      under both `/api` and `/api/queue`; each key was rejected from the other
+      role's routes; and an authenticated submit -> claim -> artifact upload ->
+      complete -> producer read workflow finished successfully. The disposable
+      task, artifact object/metadata, and probe worker were deleted afterwards.
 - [x] Full suite (43 tests) passed against local Postgres/Storage on
       2026-10-11, after applying all migrations locally.
 - [x] Hosted worker status end to end, local stack, mock worker with

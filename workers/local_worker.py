@@ -129,7 +129,10 @@ def worker_details(supervisor, ollama) -> dict:
 
 
 def main() -> None:
-    client = image_worker.TaskQueueClient(image_worker.TASK_QUEUE_URL)
+    client = image_worker.TaskQueueClient(
+        image_worker.TASK_QUEUE_URL,
+        worker_api_key=image_worker.WORKER_API_KEY,
+    )
     try:
         task_types = configured_task_types(os.environ.get("WORKER_TASK_TYPES", ""))
     except ValueError as e:

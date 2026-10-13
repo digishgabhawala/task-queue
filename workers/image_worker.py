@@ -21,7 +21,8 @@ own claim loop already IS the background thing, so it can just call forge2
 synchronously (claim -> run -> complete -> repeat).
 
 Usage:
-    TASK_QUEUE_URL=http://127.0.0.1:8000 MOCK_MODE=true python image_worker.py
+    TASK_QUEUE_URL=http://127.0.0.1:8000 WORKER_API_KEY=... \
+        MOCK_MODE=true python image_worker.py
 """
 from __future__ import annotations
 
@@ -53,6 +54,7 @@ from workers.comfyui import ComfyUISupervisor
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 TASK_QUEUE_URL = os.environ.get("TASK_QUEUE_URL", "http://127.0.0.1:8000")
+WORKER_API_KEY = os.environ.get("WORKER_API_KEY")
 WORKER_NAME = os.environ.get("WORKER_NAME", socket.gethostname())
 WORKER_ID = os.environ.get("WORKER_ID", f"image-worker-{WORKER_NAME}")
 WORKER_SESSION_ID = str(uuid.uuid4())

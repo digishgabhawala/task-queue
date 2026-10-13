@@ -12,7 +12,8 @@ from urllib.parse import urlparse
 # settings; environment variables beat .env, so neutralise them before the
 # app's settings load -- otherwise unrelated tests silently run with auth on.
 for _key, _value in (("AUTH_ENABLED", "false"), ("AUTH_ADMIN_EMAILS", ""),
-                     ("SUPABASE_PUBLISHABLE_KEY", ""), ("SERVICE_API_KEYS", "")):
+                     ("SUPABASE_PUBLISHABLE_KEY", ""), ("SERVICE_API_KEYS", ""),
+                     ("WORKER_API_KEYS", ""), ("MACHINE_AUTH_REQUIRED", "false")):
     os.environ[_key] = _value
 
 import pytest

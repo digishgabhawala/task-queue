@@ -71,13 +71,13 @@ battle-tested claim primitive than a Firestore transaction, and because
 Postgres is a better fit for the team's existing SQLAlchemy conventions
 (see the sibling repos).
 
-**Human admin authentication is activation-ready but not the complete API
-security model.** The admin dashboard and its broad worker/task listings can
-use a Supabase email/password session plus an explicit administrator allow-list.
-See [Supabase authentication](docs/authentication.md). Producer, worker, and
-artifact routes retain their MVP access model until owner IDs, worker
-enrollment, and revocable machine credentials are implemented; the service is
-therefore not yet safe for untrusted multi-user traffic.
+**Humans, producers, and workers use separate credentials.** The admin
+dashboard uses a Supabase email/password session plus an administrator
+allow-list. Producer apps and workers use independently revocable API-key
+classes, so a worker credential cannot submit tasks or read results. See
+[authentication](docs/authentication.md). Owner IDs and private artifact URLs
+remain future multi-user work, so the service is not yet a tenant-isolated
+public API.
 
 ## Local development
 
@@ -118,6 +118,10 @@ contract.
 Authentication is off by default so local development is not disrupted. A
 hosted deployment enables it only after the administrator user exists and
 `AUTH_ENABLED`, `AUTH_ADMIN_EMAILS`, and `SUPABASE_PUBLISHABLE_KEY` are set.
+Machine authentication uses hashed `SERVICE_API_KEYS` (producer apps) and
+`WORKER_API_KEYS` (workers). `MACHINE_AUTH_REQUIRED=false` exists only for a
+coordinated rollout; hosted deployments should switch it to `true` after all
+clients have their raw keys.
 
 ## Deploying schema changes
 
@@ -143,13 +147,17 @@ continues to access the tables because RLS is not forced.
 
 ```bash
 # 1. start the queue server (above), then in another terminal:
-MOCK_MODE=true python workers/image_worker.py
+WORKER_API_KEY=<raw-worker-key> MOCK_MODE=true python workers/image_worker.py
 ```
 
 ```python
 # in a third terminal / notebook
+import os
 from clients.python_client import TaskQueueClient
-client = TaskQueueClient("http://127.0.0.1:8000")
+client = TaskQueueClient(
+    "http://127.0.0.1:8000",
+    producer_api_key=os.environ["TASK_QUEUE_API_KEY"],
+)
 
 task = client.submit_task("image_generation", {
     "character_id": "gtee_dev", "task": "waving hello", "seed": 42,
@@ -171,6 +179,7 @@ Worker environment options:
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `WORKER_API_KEY` | none | Raw credential for worker-only queue routes |
 | `WORKER_ID` | `image-worker-<hostname>` | Stable registration identity |
 | `WORKER_NAME` | local hostname | Human-readable admin UI label |
 | `HEARTBEAT_SECONDS` | `60` | Hosted heartbeat interval |
