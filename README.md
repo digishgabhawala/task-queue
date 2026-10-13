@@ -126,6 +126,19 @@ them reaches Vercel (`supabase db push`, then push/merge). Deploying first
 makes every `workers` query fail until the column exists, so all live
 workers get 500s on register/heartbeat.
 
+Database security tests require the local Supabase stack and run with:
+
+```bash
+supabase start
+supabase db reset
+supabase test db
+```
+
+The public queue tables have RLS enabled with no browser policies, and direct
+grants are revoked from `anon` and `authenticated`. The FastAPI backend remains
+the only application boundary; it connects as the table owner and therefore
+continues to access the tables because RLS is not forced.
+
 ## Trying it end to end (image generation)
 
 ```bash
@@ -240,11 +253,12 @@ at or below 60 seconds with the current two-minute offline threshold.
 - [ ] Add owner-aware producer authentication, worker enrollment, revocable
   machine credentials, and private artifact delivery before this becomes a
   multi-user or externally shared service.
-- [ ] **Enable Row Level Security on the queue tables** (`tasks`, `workers`,
+- [x] **Enable Row Level Security on the queue tables** (`tasks`, `workers`,
   `artifacts` in `public`). Without it Supabase's REST API serves them to
   anyone holding the browser-safe publishable key (verified 2026-10-12: a
-  task id was readable). RLS on with no policies is enough -- the backend
-  connects as the table owner, which bypasses RLS.
+  task id was readable). RLS has no browser policies, and direct grants are
+  revoked from `anon` and `authenticated`; the backend connects as the table
+  owner, which bypasses non-forced RLS.
 - [ ] **Require service keys on the machine routes**: task submit/read and
   artifact routes accept only a producer's `X-API-Key`; worker register,
   heartbeat, claim, complete, fail and artifact upload accept only a worker

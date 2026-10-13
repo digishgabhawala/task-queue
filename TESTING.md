@@ -4,6 +4,8 @@
 
 ```bash
 supabase start
+supabase db reset
+supabase test db
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/ruff check .
 python3 scripts/validate_admin_ui.py
@@ -60,6 +62,12 @@ pytest tests/workers` (nothing connects to them).
 - [x] Schema migration applies cleanly on a fresh `supabase start` --
       confirmed: `tasks`/`artifacts` tables, indexes, the `artifacts`
       storage bucket, and both `pg_cron` cleanup jobs all present.
+- [x] Queue-table RLS migration rebuilt cleanly locally on 2026-10-13;
+      33 pgTAP assertions confirmed RLS, no browser policies, revoked CRUD
+      grants for both Data API roles, and continued table-owner access.
+- [x] Local Data API verification on 2026-10-13: publishable-key GET and POST
+      against `rest/v1/tasks` both returned `401`, while FastAPI inserted the
+      same task successfully. The full application suite passed: 139 tests.
 - [x] Full suite (43 tests) passed against local Postgres/Storage on
       2026-10-11, after applying all migrations locally.
 - [x] Hosted worker status end to end, local stack, mock worker with
