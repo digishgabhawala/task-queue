@@ -20,7 +20,7 @@ from ..services import artifact_service as asvc
 from ..services import task_service as tsvc
 from ..services import worker_service as wsvc
 
-router = APIRouter(prefix="/api")
+router = APIRouter()
 
 
 def _serialize_task(task: Task) -> dict:

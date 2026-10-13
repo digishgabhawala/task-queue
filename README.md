@@ -97,16 +97,23 @@ python3 -m venv .venv
 values (same connection string/keys on every machine) -- no `.env` needed
 for local dev. See `.env.example` for what a real deployment overrides.
 
-The admin dashboard is available at `/admin` (for example,
-`http://127.0.0.1:8000/admin`). It shows registered workers, derived
+The admin dashboard's canonical suite path is `/queue` (for example,
+`http://127.0.0.1:8000/queue`). The legacy `/admin` path remains available
+for existing bookmarks. It shows registered workers, derived
 online/offline state, capabilities, current work, heartbeat recency, recent
 tasks, and coarse progress. Its responsive, accessible visual foundation uses
 the AI Bharatiyaa Commons v0.2 design tokens pinned in
 `app/admin_ui/COMMONS_SOURCE.md`; run `python3 scripts/validate_admin_ui.py`
 after UI changes.
 
-The deployed dashboard is:
-[`https://task-queue-eight.vercel.app/admin`](https://task-queue-eight.vercel.app/admin).
+The deployed suite dashboard is:
+[`https://ai-bharatiya-web.vercel.app/queue`](https://ai-bharatiya-web.vercel.app/queue).
+
+The Task Queue service also remains directly reachable at
+[`https://task-queue-eight.vercel.app/queue`](https://task-queue-eight.vercel.app/queue).
+Browser requests use the product-scoped `/api/queue/*` routes; existing
+workers and service clients keep using the backwards-compatible `/api/*`
+contract.
 
 Authentication is off by default so local development is not disrupted. A
 hosted deployment enables it only after the administrator user exists and
