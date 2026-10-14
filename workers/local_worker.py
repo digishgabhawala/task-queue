@@ -21,6 +21,7 @@ import os
 import signal
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -61,15 +62,32 @@ def image_available() -> bool:
             and Path(image_worker.COMFYUI_START_SCRIPT).exists())
 
 
-def claim_next_task(client, worker_id: str, task_types: list[str]) -> dict | None:
+@dataclass(frozen=True)
+class ClaimAttempt:
+    task: dict | None
+    reachable: bool
+
+
+def claim_next_task(client, worker_id: str, task_types: list[str]) -> ClaimAttempt:
     # One claim across every configured type: the queue returns the oldest
     # waiting task, whatever its type. A network blip or slow hosted queue
     # (found live: a ReadTimeout killed the worker) just means "try again".
     try:
-        return client.claim_next(task_types, worker_id)
+        return ClaimAttempt(client.claim_next(task_types, worker_id), reachable=True)
     except httpx.HTTPError as e:
         print(f"claim failed, retrying next poll: {e!r}")
-        return None
+        return ClaimAttempt(None, reachable=False)
+
+
+def next_poll_delay(attempt: ClaimAttempt) -> float:
+    """Back off only after the queue positively reports no matching work.
+
+    Completed work and temporary network failures retain the short interval;
+    an HTTP 204 empty result uses the low-cost idle interval.
+    """
+    if attempt.reachable and attempt.task is None:
+        return image_worker.IDLE_POLL_SECONDS
+    return image_worker.POLL_SECONDS
 
 
 def report_result(client, task: dict, result: dict) -> None:
@@ -171,13 +189,14 @@ def main() -> None:
           f"queue={image_worker.TASK_QUEUE_URL}")
 
     while True:
-        task = claim_next_task(client, image_worker.WORKER_ID, task_types)
+        attempt = claim_next_task(client, image_worker.WORKER_ID, task_types)
+        task = attempt.task
         if task is None:
             if supervisor is not None:
                 supervisor.maybe_stop_idle()
             if ollama is not None:
                 ollama.maybe_unload_idle()
-            time.sleep(image_worker.POLL_SECONDS)
+            time.sleep(next_poll_delay(attempt))
             continue
 
         print(f"claimed {task['task_type']} {task['id']}")
@@ -192,11 +211,10 @@ def main() -> None:
         except Exception as e:
             print(f"work failed for {task['id']}: {e}")
             report_failure(client, task, e)
-            heartbeat.update(state="idle")
-            continue
-
-        report_result(client, task, result)
+        else:
+            report_result(client, task, result)
         heartbeat.update(state="idle")
+        time.sleep(next_poll_delay(attempt))
 
 
 if __name__ == "__main__":
