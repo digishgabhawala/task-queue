@@ -79,15 +79,23 @@ def claim_next_task(client, worker_id: str, task_types: list[str]) -> ClaimAttem
         return ClaimAttempt(None, reachable=False)
 
 
-def next_poll_delay(attempt: ClaimAttempt) -> float:
-    """Back off only after the queue positively reports no matching work.
+def next_poll_delay(attempt: ClaimAttempt, last_task_done_at: float | None = None,
+                    now: float | None = None) -> float:
+    """Back off only after the queue positively reports no matching work, and
+    only once the cool-off after the last finished task has passed.
 
-    Completed work and temporary network failures retain the short interval;
-    an HTTP 204 empty result uses the low-cost idle interval.
+    Completed work and temporary network failures retain the short interval.
+    An HTTP 204 empty result also keeps it for FAST_POLL_COOLOFF_SECONDS after
+    a task finished (the caller's next step usually arrives within seconds),
+    then switches to the low-cost idle interval.
     """
-    if attempt.reachable and attempt.task is None:
-        return image_worker.IDLE_POLL_SECONDS
-    return image_worker.POLL_SECONDS
+    if not (attempt.reachable and attempt.task is None):
+        return image_worker.POLL_SECONDS
+    now = time.monotonic() if now is None else now
+    if (last_task_done_at is not None
+            and now - last_task_done_at < image_worker.FAST_POLL_COOLOFF_SECONDS):
+        return image_worker.POLL_SECONDS
+    return image_worker.IDLE_POLL_SECONDS
 
 
 def report_result(client, task: dict, result: dict) -> None:
@@ -188,6 +196,7 @@ def main() -> None:
           f"task_types={task_types} mock_images={image_worker.MOCK_MODE} "
           f"queue={image_worker.TASK_QUEUE_URL}")
 
+    last_task_done_at: float | None = None  # time.monotonic(), for the cool-off
     while True:
         attempt = claim_next_task(client, image_worker.WORKER_ID, task_types)
         task = attempt.task
@@ -196,7 +205,7 @@ def main() -> None:
                 supervisor.maybe_stop_idle()
             if ollama is not None:
                 ollama.maybe_unload_idle()
-            time.sleep(next_poll_delay(attempt))
+            time.sleep(next_poll_delay(attempt, last_task_done_at))
             continue
 
         print(f"claimed {task['task_type']} {task['id']}")
@@ -214,7 +223,8 @@ def main() -> None:
         else:
             report_result(client, task, result)
         heartbeat.update(state="idle")
-        time.sleep(next_poll_delay(attempt))
+        last_task_done_at = time.monotonic()
+        time.sleep(next_poll_delay(attempt, last_task_done_at))
 
 
 if __name__ == "__main__":

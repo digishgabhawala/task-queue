@@ -184,7 +184,8 @@ Worker environment options:
 | `WORKER_NAME` | local hostname | Human-readable admin UI label |
 | `HEARTBEAT_SECONDS` | `60` | Periodic heartbeat while idle or busy; state/progress changes also wake it immediately |
 | `POLL_SECONDS` | `3` | Short delay after work or a temporary queue error before the next claim attempt |
-| `IDLE_POLL_SECONDS` | `60` | Backoff after the queue confirms no matching task is waiting |
+| `IDLE_POLL_SECONDS` | `60` | Backoff after the queue confirms no matching task is waiting (once the cool-off below has passed) |
+| `FAST_POLL_COOLOFF_SECONDS` | `60` | After finishing a task, keep polling every `POLL_SECONDS` this long even if the queue is empty -- callers submit their next step only after the previous one is done; `0` backs off immediately |
 | `MOCK_DELAY_SECONDS` | `0` | Mock mode only: pretend rendering takes this long (UI testing) |
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI the worker uses/manages |
 | `COMFYUI_MANAGE` | `true` | Start ComfyUI on demand (`false`: it must already be running) |
