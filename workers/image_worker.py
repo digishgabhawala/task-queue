@@ -61,6 +61,10 @@ WORKER_SESSION_ID = str(uuid.uuid4())
 WORKER_VERSION = "0.2.0"
 MOCK_MODE = os.environ.get("MOCK_MODE", "false").lower() == "true"
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "3"))
+# A worker with no matching work backs off independently from its heartbeat.
+# This keeps it visible as online without spending one hosted invocation every
+# three seconds while the queue is empty.
+IDLE_POLL_SECONDS = float(os.environ.get("IDLE_POLL_SECONDS", "60"))
 # Mock mode only: pretend rendering takes this long, so progress/lost-worker
 # UI can be exercised without ComfyUI.
 MOCK_DELAY_SECONDS = float(os.environ.get("MOCK_DELAY_SECONDS", "0"))

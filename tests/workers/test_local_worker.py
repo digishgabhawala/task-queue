@@ -32,13 +32,15 @@ class Queue:
 def test_worker_asks_for_the_next_task_of_any_configured_type_in_one_claim():
     # No priority between types: the queue hands out the oldest waiting task.
     q = Queue({"id": "oldest"})
-    assert lw.claim_next_task(q, "w", [IMAGE, TEXT])["id"] == "oldest"
+    attempt = lw.claim_next_task(q, "w", [IMAGE, TEXT])
+    assert attempt.task["id"] == "oldest" and attempt.reachable is True
     assert q.asked == [[IMAGE, TEXT]]
 
 
 def test_text_only_worker_never_asks_for_images():
     q = Queue(None)
-    assert lw.claim_next_task(q, "w", [TEXT]) is None
+    attempt = lw.claim_next_task(q, "w", [TEXT])
+    assert attempt.task is None and attempt.reachable is True
     assert q.asked == [[TEXT]]
 
 
@@ -101,7 +103,17 @@ def test_network_error_while_claiming_does_not_crash_the_worker():
         def claim_next(self, task_types, worker_id):
             raise httpx.ReadTimeout("The read operation timed out")
 
-    assert lw.claim_next_task(FlakyQueue(), "w", [TEXT]) is None  # logged; next poll retries
+    attempt = lw.claim_next_task(FlakyQueue(), "w", [TEXT])
+    assert attempt.task is None and attempt.reachable is False  # logged; next poll retries
+
+
+def test_polling_backs_off_only_when_queue_confirms_it_is_empty(monkeypatch):
+    monkeypatch.setattr(lw.image_worker, "POLL_SECONDS", 3)
+    monkeypatch.setattr(lw.image_worker, "IDLE_POLL_SECONDS", 60)
+
+    assert lw.next_poll_delay(lw.ClaimAttempt(None, reachable=True)) == 60
+    assert lw.next_poll_delay(lw.ClaimAttempt({"id": "task-1"}, reachable=True)) == 3
+    assert lw.next_poll_delay(lw.ClaimAttempt(None, reachable=False)) == 3
 
 
 def test_network_error_while_reporting_a_result_does_not_crash_the_worker():

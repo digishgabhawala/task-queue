@@ -182,8 +182,9 @@ Worker environment options:
 | `WORKER_API_KEY` | none | Raw credential for worker-only queue routes |
 | `WORKER_ID` | `image-worker-<hostname>` | Stable registration identity |
 | `WORKER_NAME` | local hostname | Human-readable admin UI label |
-| `HEARTBEAT_SECONDS` | `60` | Hosted heartbeat interval |
-| `POLL_SECONDS` | `3` | Delay between empty claim attempts |
+| `HEARTBEAT_SECONDS` | `60` | Periodic heartbeat while idle or busy; state/progress changes also wake it immediately |
+| `POLL_SECONDS` | `3` | Short delay after work or a temporary queue error before the next claim attempt |
+| `IDLE_POLL_SECONDS` | `60` | Backoff after the queue confirms no matching task is waiting |
 | `MOCK_DELAY_SECONDS` | `0` | Mock mode only: pretend rendering takes this long (UI testing) |
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI the worker uses/manages |
 | `COMFYUI_MANAGE` | `true` | Start ComfyUI on demand (`false`: it must already be running) |
