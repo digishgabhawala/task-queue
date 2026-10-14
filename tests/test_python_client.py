@@ -69,3 +69,21 @@ def test_unconfigured_role_omits_the_header(monkeypatch):
     monkeypatch.setattr("clients.python_client.httpx.post", fake_post)
     TaskQueueClient("https://example.test").submit_task("test", {})
     assert calls[0]["headers"] == {}
+
+
+def test_canonical_suite_page_maps_to_product_scoped_api(monkeypatch):
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr("clients.python_client.httpx.get", fake_get)
+    client = TaskQueueClient("https://ai-bharatiya-web.vercel.app/queue")
+    client.get_task("task-1")
+    assert calls == ["https://ai-bharatiya-web.vercel.app/api/queue/tasks/task-1"]
+
+
+def test_explicit_product_api_base_is_not_modified():
+    client = TaskQueueClient("https://example.test/api/queue/")
+    assert client.api_url == "https://example.test/api/queue"
