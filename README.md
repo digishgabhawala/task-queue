@@ -109,11 +109,11 @@ after UI changes.
 The deployed suite dashboard is:
 [`https://ai-bharatiya-web.vercel.app/queue`](https://ai-bharatiya-web.vercel.app/queue).
 
-The Task Queue service also remains directly reachable at
-[`https://task-queue-eight.vercel.app/queue`](https://task-queue-eight.vercel.app/queue).
-Browser requests use the product-scoped `/api/queue/*` routes; existing
-workers and service clients keep using the backwards-compatible `/api/*`
-contract.
+Use the suite URL as the canonical production address in bookmarks and
+configuration: `TASK_QUEUE_URL=https://ai-bharatiya-web.vercel.app/queue`.
+The client maps that page URL to the product-scoped `/api/queue/*` routes.
+The standalone Vercel service URL is an internal upstream used by the suite
+gateway, not a public address clients should configure.
 
 Authentication is off by default so local development is not disrupted. A
 hosted deployment enables it only after the administrator user exists and
@@ -155,7 +155,7 @@ WORKER_API_KEY=<raw-worker-key> MOCK_MODE=true python workers/image_worker.py
 import os
 from clients.python_client import TaskQueueClient
 client = TaskQueueClient(
-    "http://127.0.0.1:8000",
+    os.environ.get("TASK_QUEUE_URL", "http://127.0.0.1:8000"),
     producer_api_key=os.environ["TASK_QUEUE_API_KEY"],
 )
 
