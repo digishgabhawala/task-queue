@@ -164,3 +164,24 @@ def test_settle_wait_is_bounded(monkeypatch):
     monkeypatch.setattr(lw.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(lw.time, "sleep", lambda s: None)
     lw.wait_for_memory_release("full", timeout=60)  # returns; the real gate then decides
+
+
+def test_empty_queue_keeps_fast_polling_during_the_cooloff_after_a_task(monkeypatch):
+    # Callers submit their next step only after the previous one finishes
+    # (found live: each LinkedIn step waited up to a full idle poll).
+    monkeypatch.setattr(lw.image_worker, "POLL_SECONDS", 3)
+    monkeypatch.setattr(lw.image_worker, "IDLE_POLL_SECONDS", 60)
+    monkeypatch.setattr(lw.image_worker, "FAST_POLL_COOLOFF_SECONDS", 60)
+    empty = lw.ClaimAttempt(None, reachable=True)
+
+    assert lw.next_poll_delay(empty, last_task_done_at=1000.0, now=1030.0) == 3
+    assert lw.next_poll_delay(empty, last_task_done_at=1000.0, now=1061.0) == 60
+    assert lw.next_poll_delay(empty, last_task_done_at=None, now=1030.0) == 60
+
+
+def test_zero_cooloff_backs_off_immediately(monkeypatch):
+    monkeypatch.setattr(lw.image_worker, "POLL_SECONDS", 3)
+    monkeypatch.setattr(lw.image_worker, "IDLE_POLL_SECONDS", 60)
+    monkeypatch.setattr(lw.image_worker, "FAST_POLL_COOLOFF_SECONDS", 0)
+    empty = lw.ClaimAttempt(None, reachable=True)
+    assert lw.next_poll_delay(empty, last_task_done_at=1000.0, now=1000.5) == 60

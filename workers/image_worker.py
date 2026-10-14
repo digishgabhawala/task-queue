@@ -65,6 +65,11 @@ POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "3"))
 # This keeps it visible as online without spending one hosted invocation every
 # three seconds while the queue is empty.
 IDLE_POLL_SECONDS = float(os.environ.get("IDLE_POLL_SECONDS", "60"))
+# After finishing a task, keep the short interval this long even when the
+# queue is empty: callers (e.g. LinkedIn) submit their next step only once the
+# previous one is done, so an immediate back-off made every step wait for the
+# idle interval. 0 backs off straight away.
+FAST_POLL_COOLOFF_SECONDS = float(os.environ.get("FAST_POLL_COOLOFF_SECONDS", "60"))
 # Mock mode only: pretend rendering takes this long, so progress/lost-worker
 # UI can be exercised without ComfyUI.
 MOCK_DELAY_SECONDS = float(os.environ.get("MOCK_DELAY_SECONDS", "0"))
