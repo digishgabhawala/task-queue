@@ -2,12 +2,13 @@ import pytest
 
 from workers import local_worker as lw
 
-TEXT, IMAGE = "text_generation", "image_generation"
+TEXT, IMAGE, HERO = "text_generation", "image_generation", "hero_candidate_generation"
 
 
 def test_task_types_come_from_worker_configuration():
     assert lw.configured_task_types("image_generation, text_generation") == [IMAGE, TEXT]
     assert lw.configured_task_types("text_generation") == [TEXT]
+    assert lw.configured_task_types("hero_candidate_generation") == [HERO]
 
 
 def test_missing_configuration_is_an_error_not_a_guess():
@@ -76,6 +77,17 @@ def test_image_task_unloads_worker_model_first(monkeypatch):
                         lambda client, task, hb, sup: order.append(ollama.unloaded) or {"img": 1})
     assert lw.run_task(None, {"id": "i", "task_type": IMAGE}, None, None, ollama) == {"img": 1}
     assert order == [1]  # unloaded before rendering
+
+
+def test_hero_candidate_task_unloads_model_and_dispatches_to_hero_handler(monkeypatch):
+    ollama, order = FakeOllama(), []
+    monkeypatch.setattr(lw.image_worker, "handle_hero_candidate_task",
+                        lambda client, task, hb, sup: order.append(ollama.unloaded)
+                        or {"hero": 1})
+    task = {"id": "h", "task_type": HERO, "payload": {"profile": "full"}}
+
+    assert lw.run_task(None, task, None, None, ollama) == {"hero": 1}
+    assert order == [1]
 
 
 def test_unsupported_task_type_fails():

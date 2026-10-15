@@ -17,9 +17,9 @@ or care which.
 - **Generic on purpose.** The `tasks` table has no idea what `task_type`,
   `payload`, or `result` mean -- that contract lives between a producer and
   a worker for a given task type, documented per type, not enforced by the
-  queue. Task types today: `image_generation` and `text_generation` (the
-  second was added with zero changes to the queue itself -- see "Task
-  types" below).
+  queue. Task types today: `image_generation`, `hero_candidate_generation`,
+  and `text_generation` (new types require no queue-schema change -- see
+  "Task types" below).
 - **Pull-based, both directions.** Workers poll for available work; producers
   poll for their task's result. No callbacks -- a callback would require the
   caller to be inbound-reachable, which won't hold once producers themselves
@@ -219,7 +219,7 @@ workers/image_worker.py` still works (it starts the same loop).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WORKER_TASK_TYPES` | required (`image_generation` via `image_worker.py`) | e.g. `text_generation,image_generation`, or just `text_generation` on a laptop without room for images |
+| `WORKER_TASK_TYPES` | required (`image_generation` via `image_worker.py`) | e.g. `text_generation,image_generation,hero_candidate_generation`, or just `text_generation` on a laptop without room for images |
 | `OLLAMA_URL` | `http://localhost:11434` | Text provider used by the worker |
 | `OLLAMA_MODEL` | `qwen3:14b` | Model when the task doesn't name one |
 | `OLLAMA_IDLE_MINUTES` | `5` | Unload a worker-loaded model after this long without text work |
@@ -230,6 +230,22 @@ workers/image_worker.py` still works (it starts the same loop).
 `image_generation` -- payload `{"character_id", "task", "seed", "profile":
 "full"|"lightning"}`, result `{"image_artifact_id"}`; failure prefixes
 `insufficient_memory:`, `corrupt_output:`, `comfyui_unavailable:`.
+
+`hero_candidate_generation` -- creates one new character reference without
+requiring a pre-existing local Character Forge workspace:
+
+```
+payload: {"character_card": {"character_id": "gtee_dev", ...},
+          "seed": 1003, "profile": "full"|"lightning"}
+result:  {"hero_candidate_artifact_id": "...",
+          "candidate": {"character_id": "gtee_dev", "seed": 1003,
+                        "prompt": "...", "model_id": "...",
+                        "steps": 40, "guidance": 2.5, ...}}
+```
+
+The image is uploaded as a queue artifact; `candidate` preserves the
+Character Forge sidecar metadata needed to audit or reproduce it. The task
+uses the same memory gate and managed ComfyUI lifecycle as post images.
 
 `text_generation` -- provider-neutral, so other providers (e.g. Groq) can be
 added worker-side without touching producers:
@@ -311,7 +327,7 @@ pyproject.toml's [tool.vercel]  -- points Vercel at app.main:app directly, no se
 supabase/migrations/           -- schema, storage bucket, pg_cron cleanup jobs
 clients/python_client.py       -- reusable by both producers and workers
 workers/local_worker.py        -- the one worker per machine: capabilities, claim loop
-workers/image_worker.py        -- image_generation handler (mock or real forge2)
+workers/image_worker.py        -- post-image + hero-candidate handlers (mock or real forge2)
 workers/text_worker.py         -- text_generation handler
 workers/ollama.py              -- Ollama provider + model memory ownership
 workers/comfyui.py             -- ComfyUI supervisor

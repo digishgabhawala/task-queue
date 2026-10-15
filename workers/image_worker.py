@@ -1,4 +1,6 @@
-"""image_worker.py -- claims "image_generation" tasks and either (mock mode)
+"""image_worker.py -- runs image and hero-candidate generation tasks.
+
+For "image_generation" it either (mock mode)
 returns the character's existing hero.png almost instantly, or (real mode)
 actually calls character-forge-v2's forge2 CLI and uploads the render.
 
@@ -15,6 +17,12 @@ Task payload contract for task_type="image_generation":
 Result on success:
     {"image_artifact_id": str}
 
+Task payload contract for task_type="hero_candidate_generation":
+    {"character_card": object, "seed": int,
+     "profile": "full" | "lightning"}
+Result on success:
+    {"hero_candidate_artifact_id": str, "candidate": object}
+
 Note there's no Popen+webhook-callback dance here, unlike the old
 linkedin-content-agent <-> character-forge-v2 integration -- the worker's
 own claim loop already IS the background thing, so it can just call forge2
@@ -26,6 +34,7 @@ Usage:
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -62,7 +71,7 @@ WORKER_API_KEY = os.environ.get("WORKER_API_KEY")
 WORKER_NAME = os.environ.get("WORKER_NAME", socket.gethostname())
 WORKER_ID = os.environ.get("WORKER_ID", f"image-worker-{WORKER_NAME}")
 WORKER_SESSION_ID = str(uuid.uuid4())
-WORKER_VERSION = "0.2.0"
+WORKER_VERSION = "0.3.0"
 MOCK_MODE = os.environ.get("MOCK_MODE", "false").lower() == "true"
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "3"))
 # A worker with no matching work backs off independently from its heartbeat.
@@ -88,6 +97,13 @@ COMFYUI_ENV_PYTHON = os.environ.get(
 HERO_CACHE_DIR = Path(os.environ.get(
     "HERO_CACHE_DIR", str(Path.home() / ".cache" / "ai-bharatiya" / "heroes")))
 MAX_HERO_BYTES = 20 * 1024 * 1024
+
+# A valid tiny PNG for exercising the complete queue/artifact flow in mock
+# mode without depending on a local character workspace.
+MOCK_HERO_CANDIDATE_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
+    "AScY42YAAAAASUVORK5CYII="
+)
 
 # ComfyUI supervision (real mode only). The worker starts ComfyUI on demand,
 # stops it after COMFYUI_IDLE_MINUTES without work, and restarts it after a
@@ -126,6 +142,17 @@ def _build_real_command(character_id: str, task: str, seed: int,
     else:
         command.extend(["--out", f"queue_{uuid.uuid4().hex[:8]}.png"])
     return command
+
+
+def _build_hero_candidate_command(card_path: Path, seed: int, profile: str,
+                                  output_path: Path) -> list[str]:
+    if profile not in ("full", "lightning"):
+        raise ValueError(f"unsupported image profile: {profile!r}")
+    return [
+        COMFYUI_ENV_PYTHON, "-m", "forge2.cli", "hero-candidate",
+        str(card_path), "--seed", str(seed), "--profile", profile,
+        "--output-path", str(output_path),
+    ]
 
 
 def _hero_cache_path(payload: dict) -> Path:
@@ -322,6 +349,22 @@ def _run_real(character_id: str, task: str, seed: int, profile: str,
             temporary_dir.cleanup()
 
 
+def _run_hero_candidate(character_card: dict, seed: int,
+                        profile: str) -> tuple[bytes, dict]:
+    """Run one task in temporary storage and return image plus provenance."""
+    with tempfile.TemporaryDirectory(prefix="ai-bharatiya-hero-") as dirname:
+        work_dir = Path(dirname)
+        card_path = work_dir / "character.json"
+        output_path = work_dir / "candidate.png"
+        card_path.write_text(json.dumps(character_card))
+        cmd = _build_hero_candidate_command(card_path, seed, profile, output_path)
+        returncode, tail = _run_forge2(cmd, timeout=14_400)
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, cmd, stderr="\n".join(tail))
+        metadata = json.loads(output_path.with_suffix(".json").read_text())
+        return output_path.read_bytes(), metadata
+
+
 def _render_real(task: dict, payload: dict, heartbeat: WorkerHeartbeat | None,
                  supervisor: ComfyUISupervisor | None,
                  hero_path: Path | None = None) -> bytes:
@@ -367,6 +410,35 @@ def _render_real(task: dict, payload: dict, heartbeat: WorkerHeartbeat | None,
             supervisor.mark_idle()
 
 
+def _render_hero_candidate_real(
+        task: dict, payload: dict, heartbeat: WorkerHeartbeat | None,
+        supervisor: ComfyUISupervisor | None) -> tuple[bytes, dict]:
+    profile = payload.get("profile", "full")
+    shortfall = memory.memory_shortfall(profile)
+    if shortfall and supervisor is not None and supervisor.managed:
+        print("memory short with worker-owned ComfyUI loaded -- stopping it and re-checking")
+        supervisor.stop()
+        shortfall = memory.memory_shortfall(profile)
+    if shortfall:
+        raise RuntimeError(shortfall)
+
+    if supervisor:
+        supervisor.mark_busy()
+    try:
+        if supervisor:
+            if heartbeat:
+                heartbeat.update(state="busy", task=task, stage="starting_comfyui",
+                                 message="Making sure ComfyUI is running")
+            supervisor.ensure_running()
+        if heartbeat:
+            heartbeat.update(state="busy", task=task, stage="generating_hero",
+                             message="Character Forge is generating a hero candidate")
+        return _run_hero_candidate(payload["character_card"], payload["seed"], profile)
+    finally:
+        if supervisor:
+            supervisor.mark_idle()
+
+
 def handle_task(client: TaskQueueClient, task: dict,
                 heartbeat: WorkerHeartbeat | None = None,
                 supervisor: ComfyUISupervisor | None = None) -> dict:
@@ -393,6 +465,54 @@ def handle_task(client: TaskQueueClient, task: dict,
                          message="Uploading generated image")
     artifact = client.upload_artifact(image_bytes, "image/png", filename=f"{task['id']}.png")
     return {"image_artifact_id": artifact["id"]}
+
+
+def handle_hero_candidate_task(
+        client: TaskQueueClient, task: dict,
+        heartbeat: WorkerHeartbeat | None = None,
+        supervisor: ComfyUISupervisor | None = None) -> dict:
+    payload = task["payload"]
+    card = payload.get("character_card")
+    if not isinstance(card, dict) or not isinstance(card.get("character_id"), str):
+        raise TypeError("hero candidate requires a character_card with character_id")
+    seed = payload.get("seed")
+    if type(seed) is not int:
+        raise TypeError("hero candidate requires an integer seed")
+    profile = payload.get("profile", "full")
+    if profile not in ("full", "lightning"):
+        raise ValueError(f"unsupported image profile: {profile!r}")
+
+    if MOCK_MODE:
+        if heartbeat:
+            heartbeat.update(state="busy", task=task, stage="generating_hero",
+                             message="Producing mock hero candidate")
+        if MOCK_DELAY_SECONDS:
+            time.sleep(MOCK_DELAY_SECONDS)
+        image_bytes = MOCK_HERO_CANDIDATE_PNG
+        metadata = {
+            "filename": "candidate.png",
+            "kind": "hero_candidate",
+            "character_id": card["character_id"],
+            "seed": seed,
+            "prompt": "mock hero candidate",
+            "model_id": "mock",
+            "steps": 0,
+            "guidance": 0.0,
+        }
+    else:
+        image_bytes, metadata = _render_hero_candidate_real(
+            task, payload, heartbeat, supervisor)
+
+    if heartbeat:
+        heartbeat.update(state="busy", task=task, stage="uploading",
+                         message="Uploading hero candidate")
+    artifact_filename = f"{task['id']}.png"
+    artifact = client.upload_artifact(
+        image_bytes, "image/png", filename=artifact_filename)
+    return {
+        "hero_candidate_artifact_id": artifact["id"],
+        "candidate": {**metadata, "filename": artifact_filename},
+    }
 
 
 # Signals that should shut the worker down cleanly (running atexit, which
