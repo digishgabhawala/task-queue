@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 
 from workers.image_worker import WorkerHeartbeat, _build_real_command
@@ -7,6 +10,18 @@ def test_real_command_forwards_explicit_profile():
     command = _build_real_command("gtee_dev", "turning a dial", 42, "lightning")
     assert command[command.index("--profile") + 1] == "lightning"
     assert command[command.index("--seed") + 1] == "42"
+
+
+def test_real_command_forwards_explicit_remote_files(tmp_path):
+    command = _build_real_command(
+        "gtee_dev", "turning a dial", 42, "full",
+        hero_path=tmp_path / "hero.png",
+        card_path=tmp_path / "character.json",
+        output_path=tmp_path / "result.png",
+    )
+    assert command[command.index("--hero-path") + 1] == str(tmp_path / "hero.png")
+    assert command[command.index("--card-path") + 1] == str(tmp_path / "character.json")
+    assert command[command.index("--output-path") + 1] == str(tmp_path / "result.png")
 
 
 def test_real_command_rejects_unknown_profile():
@@ -63,6 +78,41 @@ def test_mock_mode_honors_mock_delay(monkeypatch):
     assert result == {"image_artifact_id": "artifact-1"}
 
 
+def test_remote_hero_is_downloaded_once_and_cached(monkeypatch, tmp_path):
+    import httpx
+
+    import workers.image_worker as worker
+
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append(url)
+        return httpx.Response(200, content=b"remote-png",
+                              request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(worker, "HERO_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(worker.httpx, "get", get)
+    payload = {
+        "hero_image_url": "https://storage.example/hero.png",
+        "hero_asset_id": "sha256:abc",
+        "hero_version": 2,
+        "character_card": {"character_id": "gtee_dev"},
+    }
+
+    first = worker._resolve_remote_hero(payload)
+    second = worker._resolve_remote_hero(payload)
+
+    assert first == second and first.read_bytes() == b"remote-png"
+    assert calls == ["https://storage.example/hero.png"]
+
+
+def test_remote_hero_requires_complete_character_card():
+    import workers.image_worker as worker
+
+    with pytest.raises(ValueError, match="hero_image_url and character_card"):
+        worker._resolve_remote_hero({"hero_image_url": "https://storage.example/hero.png"})
+
+
 def _fake_forge2(monkeypatch, script):
     """Point the worker at a tiny real process instead of forge2."""
     import sys
@@ -102,6 +152,34 @@ def test_other_forge2_failures_are_not_labelled_corrupt(monkeypatch):
     worker = _fake_forge2(monkeypatch, "import sys; sys.exit(1)")
     with pytest.raises(subprocess.CalledProcessError):
         worker._run_real("gtee_dev", "waving", 42, "full")
+
+
+def test_remote_run_uses_task_temporary_files_and_cleans_them(monkeypatch, tmp_path):
+    import workers.image_worker as worker
+
+    hero = tmp_path / "cached-hero.png"
+    hero.write_bytes(b"hero")
+    observed = {}
+
+    def run(command, timeout):
+        card_path = command[command.index("--card-path") + 1]
+        output_path = command[command.index("--output-path") + 1]
+        observed["card_path"] = card_path
+        observed["output_path"] = output_path
+        observed["card"] = json.loads(Path(card_path).read_text())
+        Path(output_path).write_bytes(b"rendered")
+        return 0, []
+
+    monkeypatch.setattr(worker, "_run_forge2", run)
+    result = worker._run_real(
+        "gtee_dev", "waving", 42, "full", hero,
+        {"character_id": "gtee_dev", "trigger_token": "gtee_dev"},
+    )
+
+    assert result == b"rendered"
+    assert observed["card"]["character_id"] == "gtee_dev"
+    assert not Path(observed["card_path"]).exists()
+    assert not Path(observed["output_path"]).exists()
 
 
 class FakeSupervisor:
@@ -159,6 +237,22 @@ def _real_mode(monkeypatch, run_real=None, shortfall=None):
     monkeypatch.setattr(worker, "_run_real",
                         run_real or (lambda *args: ran.append(args) or b"png"))
     return worker, ran
+
+
+def test_remote_render_passes_cached_hero_and_card_to_forge(monkeypatch, tmp_path):
+    worker, ran = _real_mode(monkeypatch)
+    hero = tmp_path / "hero.png"
+    hero.write_bytes(b"png")
+    monkeypatch.setattr(worker, "_resolve_remote_hero", lambda payload: hero)
+    remote = {**TASK, "payload": {**TASK["payload"],
+              "hero_image_url": "https://storage.example/hero.png",
+              "hero_asset_id": "abc", "hero_version": 1,
+              "character_card": {"character_id": "gtee_dev", "trigger_token": "gtee_dev"}}}
+
+    worker.handle_task(UploadClient(), remote, StageRecorder(), FakeSupervisor())
+
+    assert ran[0][4] == hero
+    assert ran[0][5]["character_id"] == "gtee_dev"
 
 
 def test_full_render_refused_when_memory_is_short(monkeypatch):

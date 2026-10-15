@@ -162,6 +162,11 @@ client = TaskQueueClient(
 task = client.submit_task("image_generation", {
     "character_id": "gtee_dev", "task": "waving hello", "seed": 42,
     "profile": "full",  # or "lightning"
+    # Optional remote locked-character snapshot. When present, any image
+    # worker can render it without workspace/gtee_dev/hero.png locally:
+    # "hero_asset_id": "sha256:...", "hero_version": 1,
+    # "hero_image_url": "https://.../hero.png?v=...",
+    # "character_card": {"character_id": "gtee_dev", ...},
 })
 result = client.wait_for_task(task["id"], timeout_seconds=30)
 print(result)  # {"status": "done", "result": {"image_artifact_id": "..."}, ...}
@@ -174,6 +179,10 @@ Set `MOCK_MODE=false` (needs `character-forge-v2` set up with a running
 ComfyUI, see that repo's README) to exercise a real render instead of the
 instant mock path. The worker forwards the task's explicit `profile` to
 forge2 and defaults older payloads without that field to `full`.
+When a payload contains the complete remote locked-character snapshot, the
+worker caches the hero by asset identity/version and supplies explicit
+temporary hero/card/output paths to Character Forge. Payloads without the
+snapshot retain the original local-workspace behavior.
 
 Worker environment options:
 
@@ -193,6 +202,7 @@ Worker environment options:
 | `COMFYUI_START_TIMEOUT_SECONDS` | `300` | How long to wait for a started ComfyUI to answer |
 | `COMFYUI_START_SCRIPT` | `character-forge-v2/scripts/start_comfyui.sh` | How ComfyUI is launched |
 | `COMFYUI_LOG` | `task-queue/comfyui.log` | Output of the worker-started ComfyUI |
+| `HERO_CACHE_DIR` | `~/.cache/ai-bharatiya/heroes` | Content-addressed cache for remotely stored locked heroes |
 | `MEMORY_REQUIRED_FULL_GB` | `14` | Free memory a Full render needs, else `insufficient_memory:` |
 | `MEMORY_REQUIRED_LIGHTNING_GB` | `0` | Same for Lightning (`0` = never refused) |
 
