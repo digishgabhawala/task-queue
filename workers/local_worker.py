@@ -2,7 +2,8 @@
 
 Each laptop (or Colab session) runs exactly one of these. WHAT it works on is
 the operator's decision, set in WORKER_TASK_TYPES (e.g.
-"text_generation,image_generation") -- not guessed from the machine. It works
+"text_generation,image_generation,hero_candidate_generation") -- not guessed
+from the machine. It works
 ONE task at a time and takes the next available task of any configured type
 (the queue hands out the oldest; no priority between types for now), so a
 render and an LLM never fight over unified memory. Memory is handed over
@@ -31,8 +32,9 @@ from workers import image_worker, memory
 from workers.ollama import OllamaManager
 from workers.text_worker import handle_text_task
 
-TEXT, IMAGE = "text_generation", "image_generation"
-SUPPORTED = (TEXT, IMAGE)  # task types this worker has handlers for
+TEXT, IMAGE, HERO = "text_generation", "image_generation", "hero_candidate_generation"
+VISUAL = (IMAGE, HERO)
+SUPPORTED = (TEXT, *VISUAL)  # task types this worker has handlers for
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:14b")
@@ -132,14 +134,16 @@ def run_task(client, task: dict, heartbeat, supervisor, ollama) -> dict:
     task_type = task.get("task_type")
     if task_type == TEXT:
         return handle_text_task(task, heartbeat, ollama, supervisor)
-    if task_type == IMAGE:
+    if task_type in VISUAL:
         # Only a model this worker loaded is unloaded -- renders need the memory.
         if ollama is not None and ollama.unload():
             if heartbeat:
                 heartbeat.update(state="busy", task=task, stage="freeing_memory",
                                  message="Waiting for the text model's memory to be released")
             wait_for_memory_release(task["payload"].get("profile", "full"), MEMORY_SETTLE_SECONDS)
-        return image_worker.handle_task(client, task, heartbeat, supervisor)
+        if task_type == IMAGE:
+            return image_worker.handle_task(client, task, heartbeat, supervisor)
+        return image_worker.handle_hero_candidate_task(client, task, heartbeat, supervisor)
     raise ValueError(f"unsupported task type {task_type!r}")
 
 
@@ -166,11 +170,12 @@ def main() -> None:
     # The operator decides; just warn if this machine looks unable to do it.
     if TEXT in task_types and not OllamaManager(OLLAMA_URL, OLLAMA_MODEL).available():
         print(f"WARNING: text_generation configured but Ollama is not answering at {OLLAMA_URL}")
-    if IMAGE in task_types and not image_available():
-        print("WARNING: image_generation configured but character-forge-v2/ComfyUI launcher "
+    if any(task_type in VISUAL for task_type in task_types) and not image_available():
+        print("WARNING: visual generation configured but character-forge-v2/ComfyUI launcher "
               "not found")
 
-    supervisor = image_worker.build_supervisor() if IMAGE in task_types else None
+    has_visual_tasks = any(task_type in VISUAL for task_type in task_types)
+    supervisor = image_worker.build_supervisor() if has_visual_tasks else None
     ollama = (OllamaManager(OLLAMA_URL, OLLAMA_MODEL, idle_seconds=OLLAMA_IDLE_MINUTES * 60,
                             timeout=OLLAMA_TIMEOUT_SECONDS)
               if TEXT in task_types else None)
@@ -185,7 +190,7 @@ def main() -> None:
         signal.signal(sig, lambda signum, frame: sys.exit(0))
 
     capabilities = {"task_types": task_types}
-    if IMAGE in task_types:
+    if has_visual_tasks:
         capabilities |= {"profiles": ["full", "lightning"], "mock_mode": image_worker.MOCK_MODE}
     if TEXT in task_types:
         capabilities |= {"text_providers": ["ollama"], "text_model": OLLAMA_MODEL}

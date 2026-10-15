@@ -3,7 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from workers.image_worker import WorkerHeartbeat, _build_real_command
+from workers.image_worker import (
+    WorkerHeartbeat,
+    _build_hero_candidate_command,
+    _build_real_command,
+)
 
 
 def test_real_command_forwards_explicit_profile():
@@ -27,6 +31,18 @@ def test_real_command_forwards_explicit_remote_files(tmp_path):
 def test_real_command_rejects_unknown_profile():
     with pytest.raises(ValueError, match="unsupported image profile"):
         _build_real_command("gtee_dev", "turning a dial", 42, "turbo")
+
+
+def test_hero_candidate_command_forwards_card_seed_profile_and_output(tmp_path):
+    card = tmp_path / "character.json"
+    output = tmp_path / "candidate.png"
+    command = _build_hero_candidate_command(card, 1701, "lightning", output)
+
+    assert command[3] == "hero-candidate"
+    assert command[4] == str(card)
+    assert command[command.index("--seed") + 1] == "1701"
+    assert command[command.index("--profile") + 1] == "lightning"
+    assert command[command.index("--output-path") + 1] == str(output)
 
 
 def test_worker_heartbeat_reports_registration_and_progress(monkeypatch):
@@ -182,6 +198,39 @@ def test_remote_run_uses_task_temporary_files_and_cleans_them(monkeypatch, tmp_p
     assert not Path(observed["output_path"]).exists()
 
 
+def test_hero_candidate_run_uses_temporary_files_and_reads_sidecar(monkeypatch):
+    import workers.image_worker as worker
+
+    observed = {}
+
+    def run(command, timeout):
+        card_path = Path(command[4])
+        output_path = Path(command[command.index("--output-path") + 1])
+        observed["card_path"] = card_path
+        observed["output_path"] = output_path
+        observed["card"] = json.loads(card_path.read_text())
+        output_path.write_bytes(b"rendered-candidate")
+        output_path.with_suffix(".json").write_text(json.dumps({
+            "filename": "candidate.png",
+            "kind": "hero_candidate",
+            "character_id": "gtee_dev",
+            "seed": 1701,
+            "prompt": "a developer mascot",
+        }))
+        return 0, []
+
+    monkeypatch.setattr(worker, "_run_forge2", run)
+    image, metadata = worker._run_hero_candidate(
+        {"character_id": "gtee_dev", "trigger_token": "gtee_dev"},
+        1701, "full")
+
+    assert image == b"rendered-candidate"
+    assert metadata["seed"] == 1701
+    assert observed["card"]["character_id"] == "gtee_dev"
+    assert not observed["card_path"].exists()
+    assert not observed["output_path"].exists()
+
+
 class FakeSupervisor:
     def __init__(self, managed=False):
         self.calls = []
@@ -226,6 +275,11 @@ class UploadClient:
 
 TASK = {"id": "t1", "claim_token": "c",
         "payload": {"character_id": "gtee_dev", "task": "waving", "seed": 1, "profile": "full"}}
+HERO_TASK = {"id": "h1", "claim_token": "c", "payload": {
+    "character_card": {"character_id": "gtee_dev", "trigger_token": "gtee_dev"},
+    "seed": 1701,
+    "profile": "full",
+}}
 
 
 def _real_mode(monkeypatch, run_real=None, shortfall=None):
@@ -272,6 +326,60 @@ def test_comfyui_is_started_before_rendering_and_released_after(monkeypatch):
     assert sup.calls == ["busy", "ensure_running", "idle"]
     assert hb.stages[:2] == ["starting_comfyui", "rendering"]
     assert len(ran) == 1
+
+
+def test_hero_candidate_uses_comfyui_lifecycle_and_returns_metadata(monkeypatch):
+    import workers.image_worker as worker
+
+    monkeypatch.setattr(worker, "MOCK_MODE", False)
+    monkeypatch.setattr(worker.memory, "memory_shortfall", lambda profile: None)
+    monkeypatch.setattr(worker, "_run_hero_candidate", lambda card, seed, profile: (
+        b"png", {"character_id": card["character_id"], "seed": seed,
+                 "model_id": "fake-t2i"}))
+    sup, hb = FakeSupervisor(), StageRecorder()
+
+    result = worker.handle_hero_candidate_task(UploadClient(), HERO_TASK, hb, sup)
+
+    assert result == {
+        "hero_candidate_artifact_id": "artifact-1",
+        "candidate": {"character_id": "gtee_dev", "seed": 1701,
+                      "model_id": "fake-t2i", "filename": "h1.png"},
+    }
+    assert sup.calls == ["busy", "ensure_running", "idle"]
+    assert hb.stages == ["starting_comfyui", "generating_hero", "uploading"]
+
+
+def test_mock_hero_candidate_uploads_valid_png_and_metadata(monkeypatch):
+    import workers.image_worker as worker
+
+    uploaded = {}
+
+    class Client:
+        def upload_artifact(self, content, content_type, filename):
+            uploaded.update(content=content, content_type=content_type, filename=filename)
+            return {"id": "hero-artifact"}
+
+    monkeypatch.setattr(worker, "MOCK_MODE", True)
+    monkeypatch.setattr(worker, "MOCK_DELAY_SECONDS", 0)
+    result = worker.handle_hero_candidate_task(Client(), HERO_TASK)
+
+    assert uploaded["content"].startswith(b"\x89PNG\r\n\x1a\n")
+    assert uploaded["content_type"] == "image/png"
+    assert result["hero_candidate_artifact_id"] == "hero-artifact"
+    assert result["candidate"]["seed"] == 1701
+
+
+@pytest.mark.parametrize("payload, message", [
+    ({"seed": 1}, "character_card"),
+    ({"character_card": {"character_id": "gtee_dev"}}, "integer seed"),
+])
+def test_hero_candidate_rejects_incomplete_payload(monkeypatch, payload, message):
+    import workers.image_worker as worker
+
+    monkeypatch.setattr(worker, "MOCK_MODE", True)
+    with pytest.raises(TypeError, match=message):
+        worker.handle_hero_candidate_task(
+            UploadClient(), {"id": "h1", "claim_token": "c", "payload": payload})
 
 
 def test_corrupt_render_schedules_comfyui_restart_and_still_fails(monkeypatch):
