@@ -26,11 +26,14 @@ Usage:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -38,6 +41,7 @@ from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 from dotenv import load_dotenv
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -81,6 +85,9 @@ CHARACTER_FORGE_V2_PATH = Path(
     os.environ.get("CHARACTER_FORGE_V2_PATH", str(_WORKSPACE_ROOT / "character-forge-v2")))
 COMFYUI_ENV_PYTHON = os.environ.get(
     "COMFYUI_ENV_PYTHON", str(_WORKSPACE_ROOT / "comfyui-env" / "bin" / "python"))
+HERO_CACHE_DIR = Path(os.environ.get(
+    "HERO_CACHE_DIR", str(Path.home() / ".cache" / "ai-bharatiya" / "heroes")))
+MAX_HERO_BYTES = 20 * 1024 * 1024
 
 # ComfyUI supervision (real mode only). The worker starts ComfyUI on demand,
 # stops it after COMFYUI_IDLE_MINUTES without work, and restarts it after a
@@ -103,12 +110,66 @@ def _run_mock(character_id: str) -> bytes:
 
 
 def _build_real_command(character_id: str, task: str, seed: int,
-                        profile: str) -> list[str]:
+                        profile: str, *, hero_path: Path | None = None,
+                        card_path: Path | None = None,
+                        output_path: Path | None = None) -> list[str]:
     if profile not in ("full", "lightning"):
         raise ValueError(f"unsupported image profile: {profile!r}")
-    out_name = f"queue_{uuid.uuid4().hex[:8]}.png"
-    return [COMFYUI_ENV_PYTHON, "-m", "forge2.cli", "generate", character_id, task,
-            "--seed", str(seed), "--profile", profile, "--out", out_name]
+    command = [COMFYUI_ENV_PYTHON, "-m", "forge2.cli", "generate", character_id, task,
+               "--seed", str(seed), "--profile", profile]
+    if hero_path is not None:
+        command.extend(["--hero-path", str(hero_path)])
+    if card_path is not None:
+        command.extend(["--card-path", str(card_path)])
+    if output_path is not None:
+        command.extend(["--output-path", str(output_path)])
+    else:
+        command.extend(["--out", f"queue_{uuid.uuid4().hex[:8]}.png"])
+    return command
+
+
+def _hero_cache_path(payload: dict) -> Path:
+    """Return a safe cache path tied to immutable hero identity/version."""
+    identity = payload.get("hero_asset_id") or payload["hero_image_url"]
+    version = payload.get("hero_version") or "unknown"
+    digest = hashlib.sha256(f"{identity}:{version}".encode()).hexdigest()
+    return HERO_CACHE_DIR / f"{digest}.png"
+
+
+def _resolve_remote_hero(payload: dict) -> Path | None:
+    """Download a remote locked hero once, then reuse its immutable cache.
+
+    No URL means the legacy local Character Forge workspace remains the
+    source. A remote render also requires the complete CharacterCard payload;
+    accepting only an image would silently drop the identity prompt.
+    """
+    url = payload.get("hero_image_url")
+    card = payload.get("character_card")
+    if not url and card is None:
+        return None
+    if not url or not isinstance(card, dict):
+        raise ValueError("remote character requires hero_image_url and character_card")
+
+    cache_path = _hero_cache_path(payload)
+    if cache_path.is_file() and cache_path.stat().st_size > 0:
+        return cache_path
+
+    response = httpx.get(url, follow_redirects=True, timeout=60)
+    response.raise_for_status()
+    content = response.content
+    if not content:
+        raise ValueError("remote hero image is empty")
+    if len(content) > MAX_HERO_BYTES:
+        raise ValueError(f"remote hero image exceeds {MAX_HERO_BYTES} bytes")
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_name(f".{cache_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_bytes(content)
+        temporary.replace(cache_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return cache_path
 
 
 class WorkerHeartbeat:
@@ -220,29 +281,50 @@ def _run_forge2(cmd: list[str], timeout: float) -> tuple[int, list[str]]:
     return returncode, list(tail)
 
 
-def _run_real(character_id: str, task: str, seed: int, profile: str) -> bytes:
-    cmd = _build_real_command(character_id, task, seed, profile)
+def _run_real(character_id: str, task: str, seed: int, profile: str,
+              hero_path: Path | None = None,
+              character_card: dict | None = None) -> bytes:
+    if (hero_path is None) != (character_card is None):
+        raise ValueError("remote render requires both hero_path and character_card")
+    temporary_dir = None
+    if hero_path is not None:
+        temporary_dir = tempfile.TemporaryDirectory(prefix="ai-bharatiya-render-")
+        work_dir = Path(temporary_dir.name)
+        card_path = work_dir / "character.json"
+        output_path = work_dir / "result.png"
+        card_path.write_text(json.dumps(character_card))
+        cmd = _build_real_command(character_id, task, seed, profile,
+                                  hero_path=hero_path, card_path=card_path,
+                                  output_path=output_path)
+    else:
+        output_path = None
+        cmd = _build_real_command(character_id, task, seed, profile)
     # Match the queue request's four-hour lease. A full 40-step render under
     # memory pressure has exceeded two hours, so the old two-hour subprocess
     # timeout could kill valid work while its queue claim was still healthy.
-    returncode, tail = _run_forge2(cmd, timeout=14_400)
-    if returncode == FORGE2_CORRUPT_EXIT_CODE:
-        # The producer recognises this prefix; retrying is its decision.
-        # Prefer forge2's own line (measured spread + saved filename).
-        detail = next((line.strip() for line in reversed(tail)
-                       if line.strip().startswith("corrupt_output:")), None)
-        raise RuntimeError(detail or (
-            "corrupt_output: ComfyUI returned a blank/uniform image "
-            f"(forge2 exit {FORGE2_CORRUPT_EXIT_CODE})"))
-    if returncode != 0:
-        raise subprocess.CalledProcessError(returncode, cmd, stderr="\n".join(tail))
-    out_name = cmd[-1]
-    out_path = CHARACTER_FORGE_V2_PATH / "workspace" / character_id / "generated" / out_name
-    return out_path.read_bytes()
+    try:
+        returncode, tail = _run_forge2(cmd, timeout=14_400)
+        if returncode == FORGE2_CORRUPT_EXIT_CODE:
+            # The producer recognises this prefix; retrying is its decision.
+            # Prefer forge2's own line (measured spread + saved filename).
+            detail = next((line.strip() for line in reversed(tail)
+                           if line.strip().startswith("corrupt_output:")), None)
+            raise RuntimeError(detail or (
+                "corrupt_output: ComfyUI returned a blank/uniform image "
+                f"(forge2 exit {FORGE2_CORRUPT_EXIT_CODE})"))
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, cmd, stderr="\n".join(tail))
+        out_path = (output_path or
+                    CHARACTER_FORGE_V2_PATH / "workspace" / character_id / "generated" / cmd[-1])
+        return out_path.read_bytes()
+    finally:
+        if temporary_dir is not None:
+            temporary_dir.cleanup()
 
 
 def _render_real(task: dict, payload: dict, heartbeat: WorkerHeartbeat | None,
-                 supervisor: ComfyUISupervisor | None) -> bytes:
+                 supervisor: ComfyUISupervisor | None,
+                 hero_path: Path | None = None) -> bytes:
     profile = payload.get("profile", "full")
     # The user picked the profile in the producer app; never downgrade it.
     # Refuse instead, so they can choose Lightning themselves.
@@ -270,7 +352,9 @@ def _render_real(task: dict, payload: dict, heartbeat: WorkerHeartbeat | None,
                              message="Character Forge and ComfyUI are generating the image")
         try:
             return _run_real(payload["character_id"], payload["task"],
-                             payload.get("seed", 0), profile)
+                             payload.get("seed", 0), profile,
+                             hero_path,
+                             payload.get("character_card") if hero_path else None)
         except RuntimeError as e:
             if supervisor and str(e).startswith("corrupt_output:"):
                 # Long ComfyUI uptime is a known cause of blank output: start
@@ -289,15 +373,20 @@ def handle_task(client: TaskQueueClient, task: dict,
     payload = task["payload"]
     character_id = payload["character_id"]
 
+    if heartbeat and payload.get("hero_image_url"):
+        heartbeat.update(state="busy", task=task, stage="resolving_hero",
+                         message="Loading the locked character reference")
+    hero_path = _resolve_remote_hero(payload)
+
     if MOCK_MODE:
         if heartbeat:
             heartbeat.update(state="busy", task=task, stage="rendering",
                              message="Producing mock image")
         if MOCK_DELAY_SECONDS:
             time.sleep(MOCK_DELAY_SECONDS)
-        image_bytes = _run_mock(character_id)
+        image_bytes = hero_path.read_bytes() if hero_path else _run_mock(character_id)
     else:
-        image_bytes = _render_real(task, payload, heartbeat, supervisor)
+        image_bytes = _render_real(task, payload, heartbeat, supervisor, hero_path)
 
     if heartbeat:
         heartbeat.update(state="busy", task=task, stage="uploading",
