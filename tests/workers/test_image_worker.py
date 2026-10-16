@@ -478,3 +478,48 @@ def test_heartbeat_survives_failing_details_provider(monkeypatch):
     worker.WorkerHeartbeat(Client(), details=broken)._send()
     assert sent["state"] == "idle"
     assert sent.get("details") is None
+
+
+def _fake_hero_forge2(monkeypatch, script):
+    import sys
+
+    import workers.image_worker as worker
+
+    monkeypatch.setattr(worker, "_build_hero_candidate_command",
+                        lambda *args: [sys.executable, "-c", script])
+    return worker
+
+
+def test_blank_hero_candidate_carries_forge2_details(monkeypatch):
+    worker = _fake_hero_forge2(monkeypatch, (
+        "import sys\n"
+        f"print({CORRUPT_LINE!r}, file=sys.stderr)\n"
+        "sys.exit(3)\n"))
+    with pytest.raises(RuntimeError) as err:
+        worker._run_hero_candidate({"character_id": "gtee_dev"}, 7, "full")
+    assert str(err.value) == CORRUPT_LINE
+
+
+def test_hero_candidate_crash_is_not_labelled_corrupt(monkeypatch):
+    import subprocess
+
+    worker = _fake_hero_forge2(monkeypatch, "import sys; sys.exit(1)")
+    with pytest.raises(subprocess.CalledProcessError):
+        worker._run_hero_candidate({"character_id": "gtee_dev"}, 7, "full")
+
+
+def test_blank_hero_candidate_schedules_comfyui_restart_and_still_fails(monkeypatch):
+    import workers.image_worker as worker
+
+    def corrupt(card, seed, profile):
+        raise RuntimeError("corrupt_output: ComfyUI returned a blank/uniform image")
+
+    monkeypatch.setattr(worker, "MOCK_MODE", False)
+    monkeypatch.setattr(worker.memory, "memory_shortfall", lambda profile: None)
+    monkeypatch.setattr(worker, "_run_hero_candidate", corrupt)
+    sup = FakeSupervisor()
+    with pytest.raises(RuntimeError, match=r"^corrupt_output:"):
+        worker.handle_hero_candidate_task(UploadClient(), HERO_TASK, StageRecorder(), sup)
+    assert "request_restart" in sup.calls
+    assert "restart" not in sup.calls
+    assert sup.calls[-1] == "idle"

@@ -308,6 +308,21 @@ def _run_forge2(cmd: list[str], timeout: float) -> tuple[int, list[str]]:
     return returncode, list(tail)
 
 
+def _raise_for_forge2_failure(returncode: int, tail: list[str], cmd: list[str]) -> None:
+    """forge2 exit 3 = a blank/uniform render -> "corrupt_output: ..." (the
+    producer recognises this prefix; retrying is its decision). Prefer
+    forge2's own line (measured spread + saved filename). Any other non-zero
+    exit is an ordinary failure."""
+    if returncode == FORGE2_CORRUPT_EXIT_CODE:
+        detail = next((line.strip() for line in reversed(tail)
+                       if line.strip().startswith("corrupt_output:")), None)
+        raise RuntimeError(detail or (
+            "corrupt_output: ComfyUI returned a blank/uniform image "
+            f"(forge2 exit {FORGE2_CORRUPT_EXIT_CODE})"))
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, cmd, stderr="\n".join(tail))
+
+
 def _run_real(character_id: str, task: str, seed: int, profile: str,
               hero_path: Path | None = None,
               character_card: dict | None = None) -> bytes:
@@ -331,16 +346,7 @@ def _run_real(character_id: str, task: str, seed: int, profile: str,
     # timeout could kill valid work while its queue claim was still healthy.
     try:
         returncode, tail = _run_forge2(cmd, timeout=14_400)
-        if returncode == FORGE2_CORRUPT_EXIT_CODE:
-            # The producer recognises this prefix; retrying is its decision.
-            # Prefer forge2's own line (measured spread + saved filename).
-            detail = next((line.strip() for line in reversed(tail)
-                           if line.strip().startswith("corrupt_output:")), None)
-            raise RuntimeError(detail or (
-                "corrupt_output: ComfyUI returned a blank/uniform image "
-                f"(forge2 exit {FORGE2_CORRUPT_EXIT_CODE})"))
-        if returncode != 0:
-            raise subprocess.CalledProcessError(returncode, cmd, stderr="\n".join(tail))
+        _raise_for_forge2_failure(returncode, tail, cmd)
         out_path = (output_path or
                     CHARACTER_FORGE_V2_PATH / "workspace" / character_id / "generated" / cmd[-1])
         return out_path.read_bytes()
@@ -359,8 +365,7 @@ def _run_hero_candidate(character_card: dict, seed: int,
         card_path.write_text(json.dumps(character_card))
         cmd = _build_hero_candidate_command(card_path, seed, profile, output_path)
         returncode, tail = _run_forge2(cmd, timeout=14_400)
-        if returncode != 0:
-            raise subprocess.CalledProcessError(returncode, cmd, stderr="\n".join(tail))
+        _raise_for_forge2_failure(returncode, tail, cmd)
         metadata = json.loads(output_path.with_suffix(".json").read_text())
         return output_path.read_bytes(), metadata
 
@@ -433,7 +438,14 @@ def _render_hero_candidate_real(
         if heartbeat:
             heartbeat.update(state="busy", task=task, stage="generating_hero",
                              message="Character Forge is generating a hero candidate")
-        return _run_hero_candidate(payload["character_card"], payload["seed"], profile)
+        try:
+            return _run_hero_candidate(payload["character_card"], payload["seed"], profile)
+        except RuntimeError as e:
+            if supervisor and str(e).startswith("corrupt_output:"):
+                # Same as a blank post render: start ComfyUI fresh before the
+                # next task; the failure is reported, the user decides.
+                supervisor.request_restart()
+            raise
     finally:
         if supervisor:
             supervisor.mark_idle()
