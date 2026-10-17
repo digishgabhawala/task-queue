@@ -197,3 +197,39 @@ def test_zero_cooloff_backs_off_immediately(monkeypatch):
     monkeypatch.setattr(lw.image_worker, "FAST_POLL_COOLOFF_SECONDS", 0)
     empty = lw.ClaimAttempt(None, reachable=True)
     assert lw.next_poll_delay(empty, last_task_done_at=1000.0, now=1000.5) == 60
+
+
+def test_worker_id_taken_at_startup_exits_with_the_servers_guidance(capsys):
+    """A user's key + a WORKER_ID someone else owns -> 409 at registration.
+    The worker must stop with a clear message, not a raw traceback."""
+    import httpx
+    import pytest
+
+    detail = ("worker id shared-name is already registered to another account -- "
+              "set a unique WORKER_ID in the worker's .env and restart it")
+
+    class TakenHeartbeat:
+        def start(self):
+            request = httpx.Request("POST", "http://queue/api/queue/workers/register")
+            response = httpx.Response(409, json={"detail": detail}, request=request)
+            raise httpx.HTTPStatusError("409 Conflict", request=request, response=response)
+
+    with pytest.raises(SystemExit) as exc:
+        lw.start_heartbeat_or_exit(TakenHeartbeat(), "shared-name")
+    message = str(exc.value.code)
+    assert "shared-name" in message
+    assert "WORKER_ID" in message and ".env" in message
+
+
+def test_other_registration_errors_are_not_swallowed():
+    import httpx
+    import pytest
+
+    class DownHeartbeat:
+        def start(self):
+            request = httpx.Request("POST", "http://queue/api/queue/workers/register")
+            response = httpx.Response(500, json={"detail": "boom"}, request=request)
+            raise httpx.HTTPStatusError("500", request=request, response=response)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        lw.start_heartbeat_or_exit(DownHeartbeat(), "w")
