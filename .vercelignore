@@ -1,0 +1,34 @@
+# Only app/ + pyproject.toml/uv.lock/requirements.txt are needed by the
+# Vercel Python build (entrypoint app.main:app; app/admin_ui is served as
+# static files). Everything below is local-only and must never be uploaded.
+
+# Secrets (incl. .env.local written by `vercel link`/`vercel env pull`)
+.env
+.env.*
+
+# Local envs, caches, tooling
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.superpowers/
+
+# Supabase CLI local state + migrations/tests (applied separately, not deployed)
+supabase/
+
+# Local worker processes, clients, dev scripts, tests, docs
+workers/
+clients/
+scripts/
+tests/
+docs/
+requirements-dev.txt
+TESTING.md
+
+# Local logs / pids / db files
+*.log
+*.pid
+*.db
+*.sqlite*
