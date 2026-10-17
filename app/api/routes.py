@@ -11,20 +11,23 @@ from ..auth import (
     public_auth_config,
     require_admin,
     require_admin_or_service,
+    require_approved_user,
     require_producer,
     require_worker,
 )
 from ..db import get_db
-from ..models import Artifact, Task, Worker
+from ..models import Artifact, Task, Worker, WorkerKey
 from ..schemas import (
     TaskCompleteRequest,
     TaskFailRequest,
     TaskSubmitRequest,
     WorkerHeartbeatRequest,
+    WorkerKeyCreateRequest,
     WorkerRegisterRequest,
 )
 from ..services import artifact_service as asvc
 from ..services import task_service as tsvc
+from ..services import worker_key_service as wksvc
 from ..services import worker_service as wsvc
 
 router = APIRouter()
@@ -246,4 +249,53 @@ def get_artifact(
     try:
         return _serialize_artifact(asvc.get_artifact(db, artifact_id))
     except asvc.ArtifactServiceError as e:
+        raise HTTPException(404, str(e))
+
+
+def _serialize_worker_key(key: WorkerKey) -> dict:
+    # Never the hash, never the raw key.
+    return {
+        "id": key.id,
+        "name": key.name,
+        "prefix": key.key_prefix,
+        "created_at": key.created_at,
+        "last_used_at": key.last_used_at,
+        "revoked_at": key.revoked_at,
+    }
+
+
+@router.get("/worker-keys")
+def list_worker_keys(
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_approved_user),
+):
+    return [_serialize_worker_key(k) for k in wksvc.list_keys(db, user_id=user.id)]
+
+
+@router.post("/worker-keys", status_code=201)
+def create_worker_key(
+    req: WorkerKeyCreateRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_approved_user),
+):
+    try:
+        created = wksvc.create_key(db, user_id=user.id, name=req.name)
+    except wksvc.WorkerKeyLimit as e:
+        raise HTTPException(409, str(e))
+    body = _serialize_worker_key(created.key)
+    del body["last_used_at"], body["revoked_at"]
+    response.headers["Cache-Control"] = "no-store"
+    return {**body, "key": created.raw_key}  # the only time the raw key leaves the API
+
+
+@router.delete("/worker-keys/{key_id}")
+def revoke_worker_key(
+    key_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_approved_user),
+):
+    try:
+        return _serialize_worker_key(wksvc.revoke_key(db, user_id=user.id, key_id=str(key_id)))
+    except wksvc.WorkerKeyNotFound as e:
         raise HTTPException(404, str(e))

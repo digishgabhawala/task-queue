@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import time
+import uuid
 from dataclasses import dataclass
 
 import httpx
 from fastapi import Depends, HTTPException
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -71,12 +73,15 @@ async def _fetch_supabase_user(access_token: str) -> dict:
     except httpx.HTTPError as exc:
         raise HTTPException(503, "Identity service is temporarily unavailable") from exc
 
-    if response.status_code != 200:
+    if response.status_code in (400, 401, 403):  # the token itself was rejected
         raise HTTPException(
             401,
             "Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if response.status_code != 200:
+        # Rate limit / outage: not a sign-out (the browser would drop the session).
+        raise HTTPException(503, "Identity service is temporarily unavailable")
     return response.json()
 
 
@@ -197,3 +202,30 @@ async def require_admin_or_service(
     if not settings.auth_enabled:
         return AuthUser(id="auth-disabled", email="local-admin@localhost")
     return await require_admin(await current_user(credentials))
+
+
+_PROFILE_STATUS = text(
+    "select status from platform.profiles where user_id = cast(:uid as uuid)")
+
+
+def _profile_status(db: Session, user_id: str) -> str | None:
+    try:
+        uuid.UUID(user_id)
+    except ValueError:
+        return None
+    try:
+        return db.execute(_PROFILE_STATUS, {"uid": user_id}).scalar()
+    except SQLAlchemyError as exc:
+        raise HTTPException(503, "Account check is temporarily unavailable") from exc
+
+
+async def require_approved_user(
+    user: AuthUser = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> AuthUser:
+    """A signed-in human whose platform profile is approved (read fresh)."""
+    if not settings.auth_enabled:
+        raise HTTPException(409, "Worker keys need sign-in (AUTH_ENABLED=true)")
+    if _profile_status(db, user.id) != "approved":
+        raise HTTPException(403, "Your account is not approved")
+    return user

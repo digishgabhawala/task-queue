@@ -48,3 +48,7 @@ class WorkerHeartbeatRequest(BaseModel):
         if value is not None and len(json.dumps(value)) > 4096:
             raise ValueError("details must serialize to at most 4096 bytes")
         return value
+
+
+class WorkerKeyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
