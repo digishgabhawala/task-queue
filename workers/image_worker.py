@@ -50,6 +50,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from dotenv import load_dotenv
@@ -99,6 +100,11 @@ COMFYUI_ENV_PYTHON = os.environ.get(
 HERO_CACHE_DIR = Path(os.environ.get(
     "HERO_CACHE_DIR", str(Path.home() / ".cache" / "ai-bharatiya" / "heroes")))
 MAX_HERO_BYTES = 20 * 1024 * 1024
+# A task payload names the hero URL, so the worker only fetches from hosts it
+# trusts: the configured Supabase project's host plus an optional comma list.
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+HERO_ALLOWED_HOSTS = os.environ.get("HERO_ALLOWED_HOSTS", "")
+_HERO_IMAGE_FORMATS = {"PNG", "JPEG", "WEBP"}
 
 # Post renders (image_generation results only) are flat cartoon art that
 # forge2 writes as ~0.9 MB PNGs. Users download them and upload to LinkedIn,
@@ -174,12 +180,63 @@ def _hero_cache_path(payload: dict) -> Path:
     return HERO_CACHE_DIR / f"{digest}.png"
 
 
+def _allowed_hero_hosts() -> set[str]:
+    hosts = {host.strip().lower() for host in HERO_ALLOWED_HOSTS.split(",") if host.strip()}
+    if SUPABASE_URL:
+        supabase_host = urlsplit(SUPABASE_URL).hostname
+        if supabase_host:
+            hosts.add(supabase_host.lower())
+    return hosts
+
+
+def _check_hero_url(url: str) -> None:
+    parts = urlsplit(url)
+    if parts.scheme != "https":
+        raise ValueError(f"remote hero image must be fetched over https, got {parts.scheme!r}")
+    host = (parts.hostname or "").lower()
+    if host not in _allowed_hero_hosts():
+        raise ValueError(
+            f"remote hero host {host!r} is not an allowed hero host "
+            "(the worker's SUPABASE_URL host or HERO_ALLOWED_HOSTS)")
+
+
+def _download_hero(url: str) -> bytes:
+    """Stream the hero, stopping as soon as it passes MAX_HERO_BYTES.
+
+    Redirects are not followed: they could lead off the allowed host.
+    """
+    too_big = f"remote hero image exceeds {MAX_HERO_BYTES} bytes"
+    with httpx.stream("GET", url, follow_redirects=False, timeout=60) as response:
+        response.raise_for_status()
+        declared = response.headers.get("Content-Length")
+        if declared and declared.isdigit() and int(declared) > MAX_HERO_BYTES:
+            raise ValueError(too_big)
+        content = bytearray()
+        for chunk in response.iter_bytes():
+            content.extend(chunk)
+            if len(content) > MAX_HERO_BYTES:
+                raise ValueError(too_big)
+    if not content:
+        raise ValueError("remote hero image is empty")
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image_format = image.format
+            image.verify()
+    except Exception as exc:
+        raise ValueError("remote hero image is not a PNG, JPEG or WebP image") from exc
+    if image_format not in _HERO_IMAGE_FORMATS:
+        raise ValueError(
+            f"remote hero image is not a PNG, JPEG or WebP image (got {image_format})")
+    return bytes(content)
+
+
 def _resolve_remote_hero(payload: dict) -> Path | None:
     """Download a remote locked hero once, then reuse its immutable cache.
 
     No URL means the legacy local Character Forge workspace remains the
     source. A remote render also requires the complete CharacterCard payload;
-    accepting only an image would silently drop the identity prompt.
+    accepting only an image would silently drop the identity prompt. Only
+    https URLs on an allowed host are fetched, and only a real image is cached.
     """
     url = payload.get("hero_image_url")
     card = payload.get("character_card")
@@ -187,19 +244,13 @@ def _resolve_remote_hero(payload: dict) -> Path | None:
         return None
     if not url or not isinstance(card, dict):
         raise ValueError("remote character requires hero_image_url and character_card")
+    _check_hero_url(url)
 
     cache_path = _hero_cache_path(payload)
     if cache_path.is_file() and cache_path.stat().st_size > 0:
         return cache_path
 
-    response = httpx.get(url, follow_redirects=True, timeout=60)
-    response.raise_for_status()
-    content = response.content
-    if not content:
-        raise ValueError("remote hero image is empty")
-    if len(content) > MAX_HERO_BYTES:
-        raise ValueError(f"remote hero image exceeds {MAX_HERO_BYTES} bytes")
-
+    content = _download_hero(url)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = cache_path.with_name(f".{cache_path.name}.{uuid.uuid4().hex}.tmp")
     try:
