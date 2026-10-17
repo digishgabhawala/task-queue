@@ -55,6 +55,7 @@ def test_users_key_registers_a_worker_owned_by_that_user(make_profile):
 
 def test_users_key_works_on_the_legacy_prefix_and_for_claims(make_profile):
     _, key, _ = _new_key(make_profile)
+    assert _register(key).status_code == 200
     resp = client.get("/api/tasks/next", headers={"X-API-Key": key},
                       params={"task_types": "nothing_waiting", "worker_id": "w-1"})
     assert resp.status_code == 204
@@ -144,3 +145,21 @@ def test_database_outage_during_key_check_is_503_not_401():
     with patch.object(wks, "find_active_key",
                       side_effect=OperationalError("select", {}, Exception("down"))):
         assert _register("tqw_some-user-key").status_code == 503
+
+
+def _claim(key, worker_id=None):
+    params = {"task_types": "nothing_waiting"}
+    if worker_id:
+        params["worker_id"] = worker_id
+    return client.get("/api/queue/tasks/next", headers={"X-API-Key": key}, params=params)
+
+
+def test_users_key_claims_only_as_its_own_worker(make_profile):
+    assert _register(ENV_KEY, worker_id="admin-laptop").status_code == 200
+    _, key, _ = _new_key(make_profile)
+    assert _register(key, worker_id="mine").status_code == 200
+    assert _claim(key, "mine").status_code == 204
+    assert _claim(key).status_code == 204
+    assert _claim(key, "admin-laptop").status_code == 409
+    assert _claim(key, "never-registered").status_code == 409
+    assert _claim(ENV_KEY, "anything").status_code == 204    # env keys unchanged
