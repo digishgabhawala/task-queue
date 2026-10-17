@@ -203,6 +203,8 @@ Worker environment options:
 | `COMFYUI_START_SCRIPT` | `character-forge-v2/scripts/start_comfyui.sh` | How ComfyUI is launched |
 | `COMFYUI_LOG` | `task-queue/comfyui.log` | Output of the worker-started ComfyUI |
 | `HERO_CACHE_DIR` | `~/.cache/ai-bharatiya/heroes` | Content-addressed cache for remotely stored locked heroes |
+| `SUPABASE_URL` | none | Its host is the one host a task's `hero_image_url` may be fetched from (https only, no redirects, streamed and stopped past 20 MB, must decode as PNG/JPEG/WebP); other URLs fail the task |
+| `HERO_ALLOWED_HOSTS` | empty | Extra comma-separated hosts allowed for `hero_image_url` |
 | `POST_IMAGE_FORMAT` | `webp` | Format of uploaded post renders (`image_generation` only): `webp` (quality below, method 6; ~9x smaller than forge2's PNG, accepted by LinkedIn on desktop/iOS/Android), `jpeg` (4:4:4 chroma, optimized) or `png` (forge2's file unchanged). Hero candidates always stay PNG |
 | `POST_IMAGE_QUALITY` | `90` | WebP/JPEG quality for post renders |
 | `MEMORY_REQUIRED_FULL_GB` | `14` | Free memory a Full render needs, else `insufficient_memory:` |

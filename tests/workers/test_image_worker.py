@@ -110,32 +110,148 @@ def test_mock_mode_honors_mock_delay(monkeypatch):
     assert result == {"image_artifact_id": "artifact-1"}
 
 
-def test_remote_hero_is_downloaded_once_and_cached(monkeypatch, tmp_path):
-    import httpx
+SUPABASE_HERO_URL = ("https://proj.supabase.co/storage/v1/object/public/"
+                     "characters/u/gtee_dev/hero.png?v=abc")
 
-    import workers.image_worker as worker
 
-    calls = []
-
-    def get(url, **kwargs):
-        calls.append(url)
-        return httpx.Response(200, content=b"remote-png",
-                              request=httpx.Request("GET", url))
-
-    monkeypatch.setattr(worker, "HERO_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(worker.httpx, "get", get)
-    payload = {
-        "hero_image_url": "https://storage.example/hero.png",
+def _hero_payload(url=SUPABASE_HERO_URL):
+    return {
+        "hero_image_url": url,
         "hero_asset_id": "sha256:abc",
         "hero_version": 2,
         "character_card": {"character_id": "gtee_dev"},
     }
 
-    first = worker._resolve_remote_hero(payload)
-    second = worker._resolve_remote_hero(payload)
 
-    assert first == second and first.read_bytes() == b"remote-png"
-    assert calls == ["https://storage.example/hero.png"]
+def _fake_hero_server(monkeypatch, tmp_path, body=None, chunks=None, headers=None):
+    """Point the worker's streamed download at canned bytes; record calls."""
+    from contextlib import contextmanager
+
+    import httpx
+
+    import workers.image_worker as worker
+
+    calls, consumed = [], []
+    monkeypatch.setattr(worker, "HERO_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(worker, "SUPABASE_URL", "https://proj.supabase.co")
+    monkeypatch.setattr(worker, "HERO_ALLOWED_HOSTS", "")
+    monkeypatch.setattr(worker.httpx, "get", lambda *a, **k: pytest.fail("must stream"))
+
+    def produce():
+        for chunk in chunks:
+            consumed.append(len(chunk))
+            yield chunk
+
+    @contextmanager
+    def stream(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        content = produce() if chunks is not None else body
+        yield httpx.Response(200, content=content, headers=headers or {},
+                             request=httpx.Request(method, url))
+
+    monkeypatch.setattr(worker.httpx, "stream", stream)
+    return worker, calls, consumed
+
+
+def test_remote_hero_is_downloaded_once_and_cached(monkeypatch, tmp_path):
+    worker, calls, _ = _fake_hero_server(monkeypatch, tmp_path, body=RENDER_PNG)
+
+    first = worker._resolve_remote_hero(_hero_payload())
+    second = worker._resolve_remote_hero(_hero_payload())
+
+    assert first == second and first.read_bytes() == RENDER_PNG
+    assert [c[1] for c in calls] == [SUPABASE_HERO_URL]
+    assert calls[0][2].get("follow_redirects") is False
+
+
+@pytest.mark.parametrize("fmt", ["JPEG", "WEBP"])
+def test_remote_hero_accepts_jpeg_and_webp(monkeypatch, tmp_path, fmt):
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), (200, 10, 10)).save(buffer, fmt)
+    worker, _, _ = _fake_hero_server(monkeypatch, tmp_path, body=buffer.getvalue())
+
+    assert worker._resolve_remote_hero(_hero_payload()).read_bytes() == buffer.getvalue()
+
+
+def test_remote_hero_from_another_host_is_refused(monkeypatch, tmp_path):
+    worker, calls, _ = _fake_hero_server(monkeypatch, tmp_path, body=RENDER_PNG)
+
+    with pytest.raises(ValueError, match="not an allowed hero host"):
+        worker._resolve_remote_hero(_hero_payload("https://evil.example/hero.png"))
+    assert calls == [] and list(tmp_path.iterdir()) == []
+
+
+def test_remote_hero_lookalike_host_is_refused(monkeypatch, tmp_path):
+    worker, calls, _ = _fake_hero_server(monkeypatch, tmp_path, body=RENDER_PNG)
+
+    with pytest.raises(ValueError, match="not an allowed hero host"):
+        worker._resolve_remote_hero(
+            _hero_payload("https://proj.supabase.co.evil.example/hero.png"))
+    assert calls == []
+
+
+def test_remote_hero_over_http_is_refused(monkeypatch, tmp_path):
+    worker, calls, _ = _fake_hero_server(monkeypatch, tmp_path, body=RENDER_PNG)
+
+    with pytest.raises(ValueError, match="https"):
+        worker._resolve_remote_hero(_hero_payload(SUPABASE_HERO_URL.replace("https", "http")))
+    assert calls == []
+
+
+def test_remote_hero_extra_allowed_host_is_accepted(monkeypatch, tmp_path):
+    worker, calls, _ = _fake_hero_server(monkeypatch, tmp_path, body=RENDER_PNG)
+    monkeypatch.setattr(worker, "HERO_ALLOWED_HOSTS", " cdn.example.com , other.example ")
+
+    worker._resolve_remote_hero(_hero_payload("https://cdn.example.com/hero.png"))
+    assert len(calls) == 1
+
+
+def test_remote_hero_refused_when_no_host_is_configured(monkeypatch, tmp_path):
+    worker, calls, _ = _fake_hero_server(monkeypatch, tmp_path, body=RENDER_PNG)
+    monkeypatch.setattr(worker, "SUPABASE_URL", None)
+
+    with pytest.raises(ValueError, match="not an allowed hero host"):
+        worker._resolve_remote_hero(_hero_payload())
+    assert calls == []
+
+
+def test_oversize_remote_hero_download_stops_early(monkeypatch, tmp_path):
+    megabyte = b"x" * (1024 * 1024)
+    worker, _, consumed = _fake_hero_server(
+        monkeypatch, tmp_path, chunks=[megabyte] * 50)
+    monkeypatch.setattr(worker, "MAX_HERO_BYTES", 3 * 1024 * 1024)
+
+    with pytest.raises(ValueError, match="exceeds"):
+        worker._resolve_remote_hero(_hero_payload())
+    assert len(consumed) <= 5  # stopped long before all 50 MB arrived
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_remote_hero_declared_oversize_is_refused_before_reading(monkeypatch, tmp_path):
+    worker, _, consumed = _fake_hero_server(
+        monkeypatch, tmp_path, chunks=[b"x" * 1024],
+        headers={"Content-Length": str(100 * 1024 * 1024)})
+
+    with pytest.raises(ValueError, match="exceeds"):
+        worker._resolve_remote_hero(_hero_payload())
+    assert consumed == []
+
+
+def test_non_image_remote_hero_is_refused(monkeypatch, tmp_path):
+    worker, _, _ = _fake_hero_server(monkeypatch, tmp_path, body=b"<html>not an image</html>")
+
+    with pytest.raises(ValueError, match="not a PNG, JPEG or WebP"):
+        worker._resolve_remote_hero(_hero_payload())
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_unsupported_image_remote_hero_is_refused(monkeypatch, tmp_path):
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(buffer, "GIF")
+    worker, _, _ = _fake_hero_server(monkeypatch, tmp_path, body=buffer.getvalue())
+
+    with pytest.raises(ValueError, match="not a PNG, JPEG or WebP"):
+        worker._resolve_remote_hero(_hero_payload())
 
 
 def test_remote_hero_requires_complete_character_card():
