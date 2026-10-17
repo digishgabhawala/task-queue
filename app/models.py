@@ -72,6 +72,9 @@ class Worker(Base):
     registered_at = Column(DateTime(timezone=True), default=_now, nullable=False)
     session_started_at = Column(DateTime(timezone=True), default=_now, nullable=False)
     last_heartbeat_at = Column(DateTime(timezone=True), default=_now, nullable=False, index=True)
+    # Owner of the self-service worker key used at registration; null for
+    # environment (WORKER_API_KEYS) keys.
+    owner_user_id = Column(UUID(as_uuid=False), nullable=True)
 
 
 class Artifact(Base):
@@ -88,3 +91,19 @@ class Artifact(Base):
     storage_path = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class WorkerKey(Base):
+    """A user's self-service worker key. Only the sha256 hex of the key and
+    its first 8 characters (for display) are stored; the raw key is shown to
+    the user once at creation and never persisted."""
+    __tablename__ = "worker_keys"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(UUID(as_uuid=False), nullable=False)
+    name = Column(String, nullable=False)
+    key_hash = Column(String, nullable=False, unique=True)
+    key_prefix = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
