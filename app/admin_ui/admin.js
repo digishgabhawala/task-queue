@@ -7,24 +7,21 @@ const elements = {
   accountEmail: document.querySelector('#account-email'),
   attention: document.querySelector('#attention'),
   attentionMessage: document.querySelector('#attention-message'),
-  authError: document.querySelector('#auth-error'),
+  authActions: document.querySelector('#auth-actions'),
+  authMessage: document.querySelector('#auth-message'),
+  authSignOut: document.querySelector('#auth-sign-out'),
   authShell: document.querySelector('#auth-shell'),
-  authStatus: document.querySelector('#auth-status'),
   busy: document.querySelector('#busy'),
   busyNote: document.querySelector('#busy-note'),
   connection: document.querySelector('#connection-summary'),
-  email: document.querySelector('#email'),
   main: document.querySelector('#main'),
   online: document.querySelector('#online'),
   onlineNote: document.querySelector('#online-note'),
-  password: document.querySelector('#password'),
   queued: document.querySelector('#queued'),
   queuedNote: document.querySelector('#queued-note'),
   refresh: document.querySelector('#refresh'),
   running: document.querySelector('#running'),
   runningNote: document.querySelector('#running-note'),
-  signIn: document.querySelector('#sign-in'),
-  signInForm: document.querySelector('#sign-in-form'),
   signOut: document.querySelector('#sign-out'),
   skipLink: document.querySelector('#skip-link'),
   tasks: document.querySelector('#tasks'),
@@ -340,15 +337,12 @@ const refresh = async () => {
 };
 
 elements.refresh.addEventListener('click', refresh);
-const setAuthError = message => {
-  elements.authError.hidden = !message;
-  elements.authError.textContent = message || '';
-};
-
-const setAuthStatus = message => {
-  elements.authStatus.hidden = !message;
-  elements.authStatus.textContent = message || '';
-};
+// Sign-in lives on the parent site's shared /login page, which forwards a
+// signed-in browser straight back to `next`. So only "no session" and a
+// rejected session (401) go there; anything else shows a message here, or
+// the two pages would bounce the browser between them forever.
+const LOGIN_URL = `/login?next=${encodeURIComponent('/queue')}`;
+const goToLogin = () => window.location.replace(LOGIN_URL);
 
 const resetDashboard = () => {
   dashboardStarted = false;
@@ -359,17 +353,16 @@ const resetDashboard = () => {
   });
 };
 
-const showSignIn = (message = '') => {
+const showMessage = (message, { actions = true } = {}) => {
   accessToken = null;
   resetDashboard();
   elements.main.hidden = true;
   elements.skipLink.hidden = true;
   elements.account.hidden = true;
   elements.authShell.hidden = false;
-  elements.signIn.disabled = !authClient;
-  setAuthStatus('');
-  setAuthError(message);
-  if (authClient) elements.email.focus();
+  elements.authMessage.textContent = message;
+  elements.authMessage.classList.toggle('is-error', actions);
+  elements.authActions.hidden = !actions;
 };
 
 const showDashboard = user => {
@@ -390,13 +383,11 @@ const showDashboard = user => {
 
 const verifyAdminSession = async session => {
   if (!session?.access_token) {
-    showSignIn();
+    goToLogin();
     return;
   }
 
   accessToken = session.access_token;
-  setAuthError('');
-  setAuthStatus('Confirming access…');
   try {
     const response = await fetch(apiUrl('auth/me'), {
       headers: {
@@ -405,57 +396,35 @@ const verifyAdminSession = async session => {
       },
     });
     if (response.status === 403) {
-      await authClient.auth.signOut();
-      showSignIn('This account does not have Task Queue admin access.');
+      showMessage('This account does not have Task Queue admin access.');
+      return;
+    }
+    if (response.status === 401) {
+      await authClient.auth.signOut({ scope: 'local' });
+      goToLogin();
       return;
     }
     if (!response.ok) {
-      await authClient.auth.signOut({ scope: 'local' });
-      showSignIn('Your session could not be verified. Please sign in again.');
+      showMessage('Your access could not be checked right now. Please reload in a moment.');
       return;
     }
     showDashboard(await response.json());
   } catch (error) {
-    showSignIn('The identity service is unavailable. Please try again.');
+    showMessage('The identity service is unavailable. Please reload in a moment.');
   }
 };
 
-elements.signInForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  if (!authClient) return;
-
-  elements.signIn.disabled = true;
-  setAuthError('');
-  setAuthStatus('Signing in…');
-  const form = new FormData(elements.signInForm);
+const signOutEverywhere = async button => {
+  button.disabled = true;
   try {
-    const { data, error } = await authClient.auth.signInWithPassword({
-      email: String(form.get('email') || '').trim(),
-      password: String(form.get('password') || ''),
-    });
-    if (error) {
-      setAuthStatus('');
-      setAuthError('Email or password is incorrect.');
-      elements.password.focus();
-      return;
-    }
-    elements.password.value = '';
-    await verifyAdminSession(data.session);
-  } catch (error) {
-    setAuthStatus('');
-    setAuthError('Sign-in is temporarily unavailable. Please try again.');
-    elements.password.focus();
+    await authClient?.auth.signOut();
   } finally {
-    elements.signIn.disabled = false;
+    window.location.assign('/login');
   }
-});
+};
 
-elements.signOut.addEventListener('click', async () => {
-  elements.signOut.disabled = true;
-  await authClient?.auth.signOut();
-  elements.signOut.disabled = false;
-  showSignIn();
-});
+elements.signOut.addEventListener('click', () => signOutEverywhere(elements.signOut));
+elements.authSignOut.addEventListener('click', () => signOutEverywhere(elements.authSignOut));
 
 const initializeAuth = async () => {
   try {
@@ -476,19 +445,16 @@ const initializeAuth = async () => {
       config.supabase_publishable_key,
       { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } },
     );
-    elements.signIn.disabled = false;
     const { data, error } = await authClient.auth.getSession();
     if (error) throw error;
     await verifyAdminSession(data.session);
 
     authClient.auth.onAuthStateChange((event, session) => {
       if (event === 'TOKEN_REFRESHED') accessToken = session?.access_token || null;
-      if (event === 'SIGNED_OUT') showSignIn();
+      if (event === 'SIGNED_OUT') goToLogin();
     });
   } catch (error) {
-    elements.signIn.disabled = true;
-    setAuthStatus('');
-    setAuthError('Sign-in could not be initialized. Please try again later.');
+    showMessage('Sign-in could not be initialized. Please reload in a moment.', { actions: false });
   }
 };
 

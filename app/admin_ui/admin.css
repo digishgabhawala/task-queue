@@ -189,40 +189,27 @@ svg {
   color: var(--color-text-muted);
 }
 
-.auth-form {
-  display: grid;
-  gap: var(--space-5);
-  margin-top: var(--space-8);
+#auth-message {
+  margin-top: var(--space-6);
 }
 
-.field {
-  display: grid;
-  gap: var(--space-2);
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
 }
 
-.field label {
-  color: var(--color-text-strong);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-}
-
-.field input {
-  width: 100%;
+.auth-actions .quiet-button {
   min-height: var(--control-height-lg);
-  padding-inline: var(--space-4);
-  color: var(--color-text);
-  background: var(--color-field-background);
-  border: 1px solid var(--color-field-border);
-  border-radius: var(--radius-sm);
-  font: inherit;
 }
 
-.field input:hover {
-  border-color: var(--color-field-border-hover);
-}
-
-.field input:focus {
-  border-color: var(--color-field-border-focus);
+a.primary-button,
+a.quiet-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 .primary-button {

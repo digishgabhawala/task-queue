@@ -30,6 +30,7 @@
     </a>
     <div class="suite-actions">
       <span class="read-only-label">Read-only admin</span>
+      <a class="quiet-button" href="/account">Account</a>
       <div id="account" class="account" hidden>
         <span id="account-email" class="account-email"></span>
         <button id="sign-out" class="quiet-button" type="button">Sign out</button>
@@ -40,24 +41,13 @@
   <main id="auth-shell" class="auth-shell" aria-labelledby="auth-title">
     <section class="auth-card">
       <p class="product-context">AI Bharatiyaa account</p>
-      <h1 id="auth-title">Sign in to Task Queue</h1>
-      <p class="auth-summary">Use the administrator account created in Supabase to view workers and recent queue activity.</p>
-
-      <form id="sign-in-form" class="auth-form">
-        <div class="field">
-          <label for="email">Email address</label>
-          <input id="email" name="email" type="email" autocomplete="username" inputmode="email" required>
-        </div>
-        <div class="field">
-          <label for="password">Password</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" required>
-        </div>
-        <p id="auth-error" class="auth-message is-error" role="alert" hidden></p>
-        <p id="auth-status" class="auth-message" role="status" aria-live="polite">Checking your session…</p>
-        <button id="sign-in" class="primary-button" type="submit" disabled>Sign in</button>
-      </form>
-
-      <p class="auth-footnote">Access is invitation-only. Task workers use separate credentials and do not sign in here.</p>
+      <h1 id="auth-title">Task Queue</h1>
+      <p id="auth-message" class="auth-message" role="status" aria-live="polite">Checking your session…</p>
+      <div id="auth-actions" class="auth-actions" hidden>
+        <a class="primary-button" href="/account">Your account</a>
+        <button id="auth-sign-out" class="quiet-button" type="button">Sign out</button>
+      </div>
+      <p class="auth-footnote">Task workers use separate credentials and do not sign in here.</p>
     </section>
   </main>
 
