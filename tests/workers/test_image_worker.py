@@ -1,13 +1,29 @@
+import io
 import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from workers.image_worker import (
     WorkerHeartbeat,
     _build_hero_candidate_command,
     _build_real_command,
 )
+
+
+def _png(size=(64, 64), color=(30, 120, 200)) -> bytes:
+    """A real PNG: post renders are converted, so fakes must decode."""
+    buffer = io.BytesIO()
+    image = Image.new("RGB", size, color)
+    # A thin dark outline, like the flat cartoon renders' line art.
+    for x in range(size[0]):
+        image.putpixel((x, size[1] // 2), (0, 0, 0))
+    image.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+RENDER_PNG = _png()
 
 
 def test_real_command_forwards_explicit_profile():
@@ -81,7 +97,7 @@ def test_mock_mode_honors_mock_delay(monkeypatch):
     monkeypatch.setattr(worker, "MOCK_MODE", True)
     monkeypatch.setattr(worker, "MOCK_DELAY_SECONDS", 7.0)
     monkeypatch.setattr(worker.time, "sleep", lambda s: slept.append(s))
-    monkeypatch.setattr(worker, "_run_mock", lambda character_id: b"png")
+    monkeypatch.setattr(worker, "_run_mock", lambda character_id: RENDER_PNG)
 
     class Client:
         def upload_artifact(self, content, content_type, filename):
@@ -289,7 +305,7 @@ def _real_mode(monkeypatch, run_real=None, shortfall=None):
     monkeypatch.setattr(worker, "MOCK_MODE", False)
     monkeypatch.setattr(worker.memory, "memory_shortfall", lambda profile: shortfall)
     monkeypatch.setattr(worker, "_run_real",
-                        run_real or (lambda *args: ran.append(args) or b"png"))
+                        run_real or (lambda *args: ran.append(args) or RENDER_PNG))
     return worker, ran
 
 
@@ -443,7 +459,7 @@ def test_mock_mode_skips_memory_gate(monkeypatch):
 
     monkeypatch.setattr(worker, "MOCK_MODE", True)
     monkeypatch.setattr(worker, "MOCK_DELAY_SECONDS", 0)
-    monkeypatch.setattr(worker, "_run_mock", lambda character_id: b"png")
+    monkeypatch.setattr(worker, "_run_mock", lambda character_id: RENDER_PNG)
     monkeypatch.setattr(worker.memory, "memory_shortfall",
                         lambda profile: pytest.fail("mock mode must not gate on memory"))
     assert worker.handle_task(UploadClient(), TASK) == {"image_artifact_id": "artifact-1"}
@@ -523,3 +539,86 @@ def test_blank_hero_candidate_schedules_comfyui_restart_and_still_fails(monkeypa
     assert "request_restart" in sup.calls
     assert "restart" not in sup.calls
     assert sup.calls[-1] == "idle"
+
+
+class RecordingClient:
+    def __init__(self):
+        self.uploaded = {}
+
+    def upload_artifact(self, content, content_type, filename):
+        self.uploaded = {"content": content, "content_type": content_type,
+                         "filename": filename}
+        return {"id": "artifact-1"}
+
+
+def _mock_post(monkeypatch, fmt=None):
+    import workers.image_worker as worker
+
+    monkeypatch.setattr(worker, "MOCK_MODE", True)
+    monkeypatch.setattr(worker, "MOCK_DELAY_SECONDS", 0)
+    monkeypatch.setattr(worker, "_run_mock", lambda character_id: RENDER_PNG)
+    if fmt is not None:
+        monkeypatch.setattr(worker, "POST_IMAGE_FORMAT", fmt)
+    client = RecordingClient()
+    assert worker.handle_task(client, TASK) == {"image_artifact_id": "artifact-1"}
+    return client.uploaded
+
+
+def test_post_image_defaults_to_webp():
+    import workers.image_worker as worker
+
+    assert worker.POST_IMAGE_FORMAT == "webp"
+
+
+def test_post_render_is_uploaded_as_webp(monkeypatch):
+    uploaded = _mock_post(monkeypatch, "webp")
+
+    assert uploaded["content_type"] == "image/webp"
+    assert uploaded["filename"] == "t1.webp"
+    image = Image.open(io.BytesIO(uploaded["content"]))
+    assert image.format == "WEBP" and image.size == (64, 64)
+
+
+def test_post_render_can_be_uploaded_as_jpeg(monkeypatch):
+    uploaded = _mock_post(monkeypatch, "jpeg")
+
+    assert uploaded["content_type"] == "image/jpeg"
+    assert uploaded["filename"] == "t1.jpg"
+    assert Image.open(io.BytesIO(uploaded["content"])).format == "JPEG"
+
+
+def test_post_render_png_setting_uploads_render_unchanged(monkeypatch):
+    uploaded = _mock_post(monkeypatch, "png")
+
+    assert uploaded == {"content": RENDER_PNG, "content_type": "image/png",
+                        "filename": "t1.png"}
+
+
+def test_converted_post_render_keeps_outlines():
+    import workers.image_worker as worker
+
+    content, _, _ = worker._encode_post_image(RENDER_PNG, "webp")
+    decoded = Image.open(io.BytesIO(content)).convert("RGB")
+    line, background = decoded.getpixel((10, 32)), decoded.getpixel((10, 10))
+    # The 1px black line stays clearly dark against the blue (200) background.
+    assert max(line) < max(background) / 2
+
+
+def test_unknown_post_image_format_is_refused():
+    import workers.image_worker as worker
+
+    with pytest.raises(ValueError, match="POST_IMAGE_FORMAT"):
+        worker._encode_post_image(RENDER_PNG, "gif")
+
+
+def test_hero_candidate_stays_png_whatever_post_format(monkeypatch):
+    import workers.image_worker as worker
+
+    monkeypatch.setattr(worker, "MOCK_MODE", True)
+    monkeypatch.setattr(worker, "MOCK_DELAY_SECONDS", 0)
+    monkeypatch.setattr(worker, "POST_IMAGE_FORMAT", "webp")
+    client = RecordingClient()
+    worker.handle_hero_candidate_task(client, HERO_TASK)
+
+    assert client.uploaded["content_type"] == "image/png"
+    assert client.uploaded["filename"] == "h1.png"

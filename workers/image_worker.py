@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import signal
@@ -52,6 +53,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
+from PIL import Image
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "clients"))
@@ -97,6 +99,15 @@ COMFYUI_ENV_PYTHON = os.environ.get(
 HERO_CACHE_DIR = Path(os.environ.get(
     "HERO_CACHE_DIR", str(Path.home() / ".cache" / "ai-bharatiya" / "heroes")))
 MAX_HERO_BYTES = 20 * 1024 * 1024
+
+# Post renders (image_generation results only) are flat cartoon art that
+# forge2 writes as ~0.9 MB PNGs. Users download them and upload to LinkedIn,
+# which accepts WebP on desktop, iOS and Android, so WebP q90 / method 6 is
+# the default: ~9x smaller with outlines visually identical. "jpeg" (q90,
+# 4:4:4) and "png" (unchanged) remain available. Hero candidates and locked
+# heroes always stay PNG -- they are the identity reference.
+POST_IMAGE_FORMAT = os.environ.get("POST_IMAGE_FORMAT", "webp").strip().lower()
+POST_IMAGE_QUALITY = int(os.environ.get("POST_IMAGE_QUALITY", "90"))
 
 # A valid tiny PNG for exercising the complete queue/artifact flow in mock
 # mode without depending on a local character workspace.
@@ -197,6 +208,23 @@ def _resolve_remote_hero(payload: dict) -> Path | None:
     finally:
         temporary.unlink(missing_ok=True)
     return cache_path
+
+
+def _encode_post_image(png_bytes: bytes, fmt: str) -> tuple[bytes, str, str]:
+    """Return (content, content_type, extension) for a post render."""
+    if fmt == "png":
+        return png_bytes, "image/png", ".png"
+    if fmt not in ("webp", "jpeg"):
+        raise ValueError(f"unsupported POST_IMAGE_FORMAT {fmt!r} (use webp, jpeg or png)")
+    with Image.open(io.BytesIO(png_bytes)) as source:
+        image = source.convert("RGB")
+    buffer = io.BytesIO()
+    if fmt == "webp":
+        image.save(buffer, "WEBP", quality=POST_IMAGE_QUALITY, method=6)
+        return buffer.getvalue(), "image/webp", ".webp"
+    # 4:4:4 chroma keeps thin coloured outlines from bleeding.
+    image.save(buffer, "JPEG", quality=POST_IMAGE_QUALITY, subsampling=0, optimize=True)
+    return buffer.getvalue(), "image/jpeg", ".jpg"
 
 
 class WorkerHeartbeat:
@@ -475,7 +503,11 @@ def handle_task(client: TaskQueueClient, task: dict,
     if heartbeat:
         heartbeat.update(state="busy", task=task, stage="uploading",
                          message="Uploading generated image")
-    artifact = client.upload_artifact(image_bytes, "image/png", filename=f"{task['id']}.png")
+    # forge2 has already refused a blank render (corrupt_output) on the PNG;
+    # only a good render reaches this conversion.
+    content, content_type, extension = _encode_post_image(image_bytes, POST_IMAGE_FORMAT)
+    artifact = client.upload_artifact(content, content_type,
+                                      filename=f"{task['id']}{extension}")
     return {"image_artifact_id": artifact["id"]}
 
 

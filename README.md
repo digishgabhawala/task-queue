@@ -88,7 +88,7 @@ supabase/tap/supabase`).
 ```bash
 supabase start          # local Postgres + Storage, migrations applied automatically
 python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pip install -r requirements-dev.txt   # includes requirements-worker.txt
 .venv/bin/pytest tests/ -v
 .venv/bin/uvicorn app.main:app --reload --port 8000
 ```
@@ -203,6 +203,8 @@ Worker environment options:
 | `COMFYUI_START_SCRIPT` | `character-forge-v2/scripts/start_comfyui.sh` | How ComfyUI is launched |
 | `COMFYUI_LOG` | `task-queue/comfyui.log` | Output of the worker-started ComfyUI |
 | `HERO_CACHE_DIR` | `~/.cache/ai-bharatiya/heroes` | Content-addressed cache for remotely stored locked heroes |
+| `POST_IMAGE_FORMAT` | `webp` | Format of uploaded post renders (`image_generation` only): `webp` (quality below, method 6; ~9x smaller than forge2's PNG, accepted by LinkedIn on desktop/iOS/Android), `jpeg` (4:4:4 chroma, optimized) or `png` (forge2's file unchanged). Hero candidates always stay PNG |
+| `POST_IMAGE_QUALITY` | `90` | WebP/JPEG quality for post renders |
 | `MEMORY_REQUIRED_FULL_GB` | `14` | Free memory a Full render needs, else `insufficient_memory:` |
 | `MEMORY_REQUIRED_LIGHTNING_GB` | `0` | Same for Lightning (`0` = never refused) |
 
