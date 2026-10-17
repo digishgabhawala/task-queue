@@ -1,0 +1,4 @@
+# Worker-only dependencies (workers/*.py). Kept out of requirements.txt /
+# pyproject.toml so the Vercel API bundle stays small.
+python-dotenv==1.2.2
+Pillow==11.3.0
