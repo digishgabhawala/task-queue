@@ -182,7 +182,13 @@ def claim_next(task_types: str = Query(..., description="comma-separated task_ty
               worker_id: str | None = None,
               lease_minutes: int | None = Query(None, gt=0),
               db: Session = Depends(get_db),
-              _worker: AuthUser = Depends(require_worker)):
+              caller: AuthUser = Depends(require_worker)):
+    if caller.owner_user_id is not None and worker_id is not None:
+        # A user's key claims only as one of that user's registered workers,
+        # so work is never attributed to someone else's machine.
+        worker = db.get(Worker, worker_id)
+        if worker is None or worker.owner_user_id != caller.owner_user_id:
+            raise HTTPException(409, f"worker {worker_id} is not registered with this key's owner")
     claimed = tsvc.claim_next(db, task_types.split(","), worker_id or f"worker-{uuid.uuid4().hex[:8]}",
                               lease_minutes)
     if claimed is None:
