@@ -78,6 +78,7 @@ def _serialize_worker(worker: Worker) -> dict:
         "session_started_at": worker.session_started_at,
         "last_heartbeat_at": worker.last_heartbeat_at,
         "online": wsvc.is_online(worker),
+        "owner_user_id": worker.owner_user_id,
     }
 
 
@@ -105,16 +106,20 @@ def auth_me(user: AuthUser = Depends(require_admin)):
 def register_worker(
     req: WorkerRegisterRequest,
     db: Session = Depends(get_db),
-    _worker: AuthUser = Depends(require_worker),
+    caller: AuthUser = Depends(require_worker),
 ):
-    worker = wsvc.register_worker(
-        db,
-        worker_id=req.worker_id,
-        name=req.name,
-        session_id=req.session_id,
-        capabilities=req.capabilities,
-        version=req.version,
-    )
+    try:
+        worker = wsvc.register_worker(
+            db,
+            worker_id=req.worker_id,
+            name=req.name,
+            session_id=req.session_id,
+            capabilities=req.capabilities,
+            version=req.version,
+            owner_user_id=caller.owner_user_id,
+        )
+    except wsvc.WorkerIdTaken as e:
+        raise HTTPException(409, str(e))
     return _serialize_worker(worker)
 
 
