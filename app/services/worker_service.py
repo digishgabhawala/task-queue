@@ -38,7 +38,9 @@ def register_worker(db: Session, *, worker_id: str, name: str, session_id: str,
         db.add(worker)
     elif owner_user_id is not None and worker.owner_user_id != owner_user_id:
         db.rollback()
-        raise WorkerIdTaken(f"worker id {worker_id} is in use by another owner")
+        raise WorkerIdTaken(
+            f"worker id {worker_id} is already registered to another account -- "
+            "set a unique WORKER_ID in the worker's .env and restart it")
     worker.owner_user_id = owner_user_id
     worker.name = name
     worker.session_id = session_id

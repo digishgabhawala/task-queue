@@ -158,6 +158,26 @@ def worker_details(supervisor, ollama) -> dict:
     return details
 
 
+def start_heartbeat_or_exit(heartbeat, worker_id: str) -> None:
+    """Register and start heartbeats. A 409 here means this WORKER_ID belongs
+    to another account (a user's worker key can't take it over): stop with
+    the fix spelled out instead of a traceback."""
+    try:
+        heartbeat.start()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 409:
+            raise
+        try:
+            detail = exc.response.json().get("detail")
+        except ValueError:
+            detail = None
+        sys.exit(
+            f"local_worker: could not register worker_id={worker_id!r}: "
+            f"{detail or 'it is registered to another account'}\n"
+            "Fix: set a unique WORKER_ID in this worker's .env (task-queue/.env), "
+            "e.g. WORKER_ID=<your-name>-<machine>-worker, then start the worker again.")
+
+
 def main() -> None:
     client = image_worker.TaskQueueClient(
         image_worker.TASK_QUEUE_URL,
@@ -196,7 +216,7 @@ def main() -> None:
         capabilities |= {"text_providers": ["ollama"], "text_model": OLLAMA_MODEL}
     heartbeat = image_worker.WorkerHeartbeat(
         client, details=lambda: worker_details(supervisor, ollama), capabilities=capabilities)
-    heartbeat.start()
+    start_heartbeat_or_exit(heartbeat, image_worker.WORKER_ID)
     print(f"local_worker starting -- worker_id={image_worker.WORKER_ID} "
           f"task_types={task_types} mock_images={image_worker.MOCK_MODE} "
           f"queue={image_worker.TASK_QUEUE_URL}")

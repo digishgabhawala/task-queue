@@ -129,7 +129,11 @@ def test_producer_key_cannot_act_as_a_worker():
 def test_users_key_cannot_take_over_another_owners_worker_id(make_profile):
     assert _register(ENV_KEY, worker_id="admin-laptop").status_code == 200
     _, key, _ = _new_key(make_profile)
-    assert _register(key, worker_id="admin-laptop").status_code == 409
+    taken = _register(key, worker_id="admin-laptop")
+    assert taken.status_code == 409
+    # The fix is on the user's machine: tell them exactly what to change.
+    assert "admin-laptop" in taken.json()["detail"]
+    assert "set a unique WORKER_ID in the worker's .env" in taken.json()["detail"]
     _, other_key, _ = _new_key(make_profile)
     assert _register(other_key, worker_id="mine").status_code == 200
     assert _register(key, worker_id="mine").status_code == 409
