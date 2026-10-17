@@ -19,6 +19,8 @@ PRODUCER_KEY = "tq_test_producer_0123456789"
 WORKER_KEY = "tq_test_worker_0123456789"
 PRODUCER_HASH = hashlib.sha256(PRODUCER_KEY.encode()).hexdigest()
 WORKER_HASH = hashlib.sha256(WORKER_KEY.encode()).hexdigest()
+# Unknown worker keys are looked up as users' keys (joined to platform.profiles).
+pytestmark = pytest.mark.usefixtures("_platform_profiles")
 
 
 @pytest.fixture(autouse=True)

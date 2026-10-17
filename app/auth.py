@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 from dataclasses import dataclass
 
 import httpx
 from fastapi import Depends, HTTPException
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from .config import settings
+from .db import get_db
+from .services import worker_key_service
 
 _bearer = HTTPBearer(auto_error=False)
 _service_key = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -22,6 +27,24 @@ class AuthUser:
     email: str
     name: str | None = None
     avatar_url: str | None = None
+    # Set only for a self-service worker key: the user who owns that key.
+    owner_user_id: str | None = None
+
+
+# Users' worker keys: sha256(key) -> (owner, expiry as epoch seconds). Only
+# matches are cached, and for at most WORKER_KEY_CACHE_SECONDS, so revoking a
+# key or suspending its owner takes effect within a minute; misses are never
+# cached, so a brand-new key works at once. Keyed by the hash, never the key.
+WORKER_KEY_CACHE_SECONDS = 60
+_worker_key_cache: dict[str, tuple[worker_key_service.KeyOwner, float]] = {}
+
+
+def clear_worker_key_cache() -> None:
+    _worker_key_cache.clear()
+
+
+def _now() -> float:
+    return time.time()
 
 
 def public_auth_config() -> dict:
@@ -122,9 +145,40 @@ async def require_producer(api_key: str | None = Depends(_service_key)) -> AuthU
     return _require_machine_key("producer", api_key, settings.service_key_hashes)
 
 
-async def require_worker(api_key: str | None = Depends(_service_key)) -> AuthUser:
-    """Require a worker key; human and producer credentials never qualify."""
-    return _require_machine_key("worker", api_key, settings.worker_key_hashes)
+def _user_worker_key(db: Session, raw_key: str) -> worker_key_service.KeyOwner | None:
+    digest = worker_key_service.hash_key(raw_key)
+    now = _now()
+    cached = _worker_key_cache.get(digest)
+    if cached and cached[1] > now:
+        return cached[0]
+    _worker_key_cache.pop(digest, None)
+    try:
+        owner = worker_key_service.find_active_key(db, raw_key)
+    except SQLAlchemyError as exc:
+        # An outage is not a bad key: a 401 would make workers give up.
+        raise HTTPException(503, "Worker key check is temporarily unavailable") from exc
+    if owner is not None:
+        _worker_key_cache[digest] = (owner, now + WORKER_KEY_CACHE_SECONDS)
+    return owner
+
+
+def require_worker(
+    api_key: str | None = Depends(_service_key),
+    db: Session = Depends(get_db),
+) -> AuthUser:
+    """Require a worker key: an environment WORKER_API_KEYS key, or an active
+    self-service key whose owner is approved. Human and producer credentials
+    never qualify, and a user's worker key never qualifies as a producer."""
+    if not api_key:
+        return _require_machine_key("worker", api_key, settings.worker_key_hashes)
+    name = _name_for_key(api_key, settings.worker_key_hashes)
+    if name is not None:
+        return _machine_user("worker", name)
+    owner = _user_worker_key(db, api_key)
+    if owner is None:
+        raise HTTPException(401, "Invalid API key")
+    return AuthUser(id=f"worker-key:{owner.key_id}", email=f"{owner.key_id}@worker-key",
+                    owner_user_id=owner.user_id)
 
 
 async def require_admin_or_service(

@@ -19,13 +19,27 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class WorkerIdTaken(WorkerServiceError):
+    pass
+
+
 def register_worker(db: Session, *, worker_id: str, name: str, session_id: str,
-                    capabilities: dict, version: str | None) -> Worker:
+                    capabilities: dict, version: str | None,
+                    owner_user_id: str | None = None) -> Worker:
+    """Register (or re-register) a worker. ``owner_user_id`` is the user whose
+    self-service key registered it; None for environment keys. A user's key
+    may not take over a worker id that belongs to someone else (that would
+    replace the other worker's session); environment keys are the operator's
+    and may."""
     now = _now()
     worker = db.get(Worker, worker_id)
     if worker is None:
         worker = Worker(id=worker_id, registered_at=now)
         db.add(worker)
+    elif owner_user_id is not None and worker.owner_user_id != owner_user_id:
+        db.rollback()
+        raise WorkerIdTaken(f"worker id {worker_id} is in use by another owner")
+    worker.owner_user_id = owner_user_id
     worker.name = name
     worker.session_id = session_id
     worker.capabilities = capabilities
