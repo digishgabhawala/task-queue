@@ -88,3 +88,34 @@ def test_root_redirects_to_suite_queue_path():
     resp = client.get("/", follow_redirects=False)
     assert resp.status_code == 307
     assert resp.headers["location"] == "/queue"
+
+
+def _branch(js: str, marker: str) -> str:
+    """The code of the `if (...)` branch that starts at `marker`, up to its return."""
+    return js.split(marker, 1)[1].split("return;", 1)[0]
+
+
+def test_admin_page_uses_the_shared_login_and_never_loops_on_403():
+    html = client.get("/queue").text
+    assert 'id="sign-in-form"' not in html and 'type="password"' not in html
+    assert 'href="/account"' in html
+    assert 'id="auth-message"' in html
+    js = client.get("/queue/admin-assets/admin.js").text
+    assert "/login?next=" in js and "signInWithPassword" not in js
+    forbidden = _branch(js, "response.status === 403")
+    assert "location" not in forbidden          # 403 renders a message, never redirects
+    assert "goToLogin" not in forbidden
+    assert "signOut" not in forbidden           # and keeps the session for the other apps
+    assert "goToLogin()" in _branch(js, "response.status === 401")
+    assert "const goToLogin = () => window.location.replace(LOGIN_URL)" in js
+
+
+def test_only_a_rejected_session_goes_to_login():
+    """/login forwards a signed-in browser straight back to `next`, so any
+    redirect other than "no session" or "401" would loop (Review Focus 1)."""
+    js = client.get("/queue/admin-assets/admin.js").text
+    unavailable = _branch(js, "if (!response.ok)")
+    assert "location" not in unavailable and "goToLogin" not in unavailable
+    assert "signOut" not in unavailable
+    calls = [line.strip() for line in js.splitlines() if "goToLogin()" in line]
+    assert len(calls) == 3, calls  # no session, 401, SIGNED_OUT
