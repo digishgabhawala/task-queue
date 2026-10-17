@@ -287,8 +287,11 @@ at or below 60 seconds with the current two-minute offline threshold.
 - [x] Provide a deployed, read-only admin dashboard for workers and tasks.
 - [x] Add opt-in Supabase authentication and an allow-list for the human admin
   dashboard and broad worker/task listings.
-- [ ] Add owner-aware producer authentication, worker enrollment, revocable
-  machine credentials, and private artifact delivery before this becomes a
+- [x] Worker enrollment with revocable machine credentials: approved users
+  create and revoke their own worker keys on /account; a user's key
+  registers and claims only as that user's workers.
+- [ ] Add owner-aware producer authentication (tasks scoped to the
+  submitting owner) and private artifact delivery before this becomes a
   multi-user or externally shared service.
 - [x] **Enable Row Level Security on the queue tables** (`tasks`, `workers`,
   `artifacts` in `public`). Without it Supabase's REST API serves them to
@@ -296,7 +299,7 @@ at or below 60 seconds with the current two-minute offline threshold.
   task id was readable). RLS has no browser policies, and direct grants are
   revoked from `anon` and `authenticated`; the backend connects as the table
   owner, which bypasses non-forced RLS.
-- [ ] **Require service keys on the machine routes**: task submit/read and
+- [x] **Require service keys on the machine routes**: task submit/read and
   artifact routes accept only a producer's `X-API-Key`; worker register,
   heartbeat, claim, complete, fail and artifact upload accept only a worker
   key (separate from producer keys and human sessions).
