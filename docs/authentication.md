@@ -30,6 +30,11 @@ constant-time comparison.
   server-side `SERVICE_API_KEYS`. Producers may submit a task, fetch one task,
   fetch one artifact, and read worker availability. `GET /api/workers` also
   accepts a human admin session for the dashboard.
+- Demo Reel may instead use the additive server-only
+  `DEMO_REEL_PRODUCER_API_KEY_HASH`. Its single SHA-256 hash is merged at
+  runtime under the fixed `demo-reel` producer identity; this avoids reading
+  or rewriting the existing sensitive `SERVICE_API_KEYS` mapping. The raw key
+  remains only in Demo Reel's environment as `TASK_QUEUE_API_KEY`.
 - Workers use raw `WORKER_API_KEY` values whose hashes are listed separately
   in server-side `WORKER_API_KEYS`. Workers may register, heartbeat, claim,
   complete/fail, and upload artifacts.
@@ -48,15 +53,30 @@ The API environment format is a comma-separated name/hash map:
 
 ```text
 SERVICE_API_KEYS=linkedin-content-agent:<producer-hash>,another-app:<producer-hash>
+DEMO_REEL_PRODUCER_API_KEY_HASH=<demo-reel-producer-hash>
 WORKER_API_KEYS=digish-macbook:<worker-hash>,colab-worker:<worker-hash>
 MACHINE_AUTH_REQUIRED=true
 ```
 
-Malformed entries, or enforcement without both key classes, fail closed at
-startup. During a coordinated migration only, set
+Malformed entries, conflicting Demo Reel identity/hash assignments, or
+enforcement without both key classes fail closed at startup. An exact
+`demo-reel`/hash duplicate in `SERVICE_API_KEYS` is safely deduplicated.
+During a coordinated migration only, set
 `MACHINE_AUTH_REQUIRED=false`: a missing key is temporarily accepted, while a
 present but invalid/wrong-role key is still rejected. Give every client its
 raw key before switching the server to `true`.
+
+### Additive Demo Reel rollout
+
+1. Generate a new raw key in a secure local shell and compute its SHA-256 hash
+   with the commands above. Do not commit or log the raw value.
+2. Give the raw key only to Demo Reel as `TASK_QUEUE_API_KEY`.
+3. Add only its hash to the Task Queue server as the sensitive environment
+   variable `DEMO_REEL_PRODUCER_API_KEY_HASH`. Do not inspect or modify the
+   existing `SERVICE_API_KEYS` value, and do not change worker credentials.
+4. Redeploy Task Queue, then verify Demo Reel can call a producer route with
+   `X-API-Key`; verify a wrong key receives `401`.
+5. To revoke the credential, remove the dedicated hash and redeploy.
 
 ## One-time hosted setup
 

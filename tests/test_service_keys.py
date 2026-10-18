@@ -8,11 +8,13 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from app import auth
-from app.config import Settings
+from app.config import DEMO_REEL_PRODUCER_IDENTITY, Settings
 from app.main import app
 
 RAW_KEY = "tq_test_linkedin_key_0123456789"
 HASH = hashlib.sha256(RAW_KEY.encode()).hexdigest()
+DEMO_REEL_RAW_KEY = "tq_test_demo_reel_key_0123456789"
+DEMO_REEL_HASH = hashlib.sha256(DEMO_REEL_RAW_KEY.encode()).hexdigest()
 
 
 @pytest.fixture(autouse=True)
@@ -30,11 +32,21 @@ def _probe_app():
     return TestClient(probe)
 
 
+def _producer_probe_app():
+    probe = FastAPI()
+
+    @probe.get("/probe")
+    def probe_route(user: auth.AuthUser = Depends(auth.require_producer)):
+        return {"id": user.id, "email": user.email}
+    return TestClient(probe)
+
+
 def _enable(monkeypatch, keys=f"linkedin-content-agent:{HASH}"):
     monkeypatch.setattr(auth.settings, "auth_enabled", True)
     monkeypatch.setattr(auth.settings, "supabase_publishable_key", "sb_publishable_test")
     monkeypatch.setattr(auth.settings, "auth_admin_emails", "admin@example.com")
     monkeypatch.setattr(auth.settings, "service_api_keys", keys)
+    monkeypatch.setattr(auth.settings, "demo_reel_producer_api_key_hash", "")
 
 
 def test_valid_service_key_identifies_the_app(monkeypatch):
@@ -64,6 +76,31 @@ def test_revoked_key_no_longer_works(monkeypatch):
     assert _probe_app().get("/probe", headers={"X-API-Key": RAW_KEY}).status_code == 401
 
 
+def test_demo_reel_key_is_absent_by_default(monkeypatch):
+    _enable(monkeypatch, keys="")
+    resp = _producer_probe_app().get(
+        "/probe", headers={"X-API-Key": DEMO_REEL_RAW_KEY}
+    )
+    assert resp.status_code == 401
+
+
+def test_demo_reel_key_is_merged_and_authorized_as_fixed_producer(monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        auth.settings, "demo_reel_producer_api_key_hash", DEMO_REEL_HASH
+    )
+    resp = _producer_probe_app().get(
+        "/probe", headers={"X-API-Key": DEMO_REEL_RAW_KEY}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["id"] == f"producer:{DEMO_REEL_PRODUCER_IDENTITY}"
+
+    # The existing configured producer remains authorized after the merge.
+    existing = _producer_probe_app().get("/probe", headers={"X-API-Key": RAW_KEY})
+    assert existing.status_code == 200
+    assert existing.json()["id"] == "producer:linkedin-content-agent"
+
+
 def test_auth_disabled_needs_no_key(monkeypatch):
     monkeypatch.setattr(auth.settings, "auth_enabled", False)
     assert _probe_app().get("/probe").status_code == 200
@@ -83,6 +120,45 @@ def test_keys_are_configured_as_name_and_sha256_hash():
     )
     assert s.service_key_hashes == {HASH: "linkedin", "b" * 64: "other"}
     assert s.worker_key_hashes == {"c" * 64: "laptop"}
+
+
+def test_demo_reel_hash_is_merged_without_service_keys():
+    s = Settings(_env_file=None, demo_reel_producer_api_key_hash=DEMO_REEL_HASH.upper())
+    assert s.service_key_hashes == {DEMO_REEL_HASH: DEMO_REEL_PRODUCER_IDENTITY}
+
+
+def test_malformed_demo_reel_hash_fails_at_startup():
+    with pytest.raises(ValueError, match="DEMO_REEL_PRODUCER_API_KEY_HASH"):
+        Settings(_env_file=None, demo_reel_producer_api_key_hash="not-a-sha256-hash")
+
+
+@pytest.mark.parametrize(
+    "service_api_keys",
+    [
+        f"another-producer:{DEMO_REEL_HASH}",
+        (
+            f"another-producer:{DEMO_REEL_HASH},"
+            f"{DEMO_REEL_PRODUCER_IDENTITY}:{DEMO_REEL_HASH}"
+        ),
+        f"{DEMO_REEL_PRODUCER_IDENTITY}:{'d' * 64}",
+    ],
+)
+def test_demo_reel_hash_conflicts_fail_at_startup(service_api_keys):
+    with pytest.raises(ValueError, match="conflict"):
+        Settings(
+            _env_file=None,
+            service_api_keys=service_api_keys,
+            demo_reel_producer_api_key_hash=DEMO_REEL_HASH,
+        )
+
+
+def test_exact_demo_reel_duplicate_is_safely_deduplicated():
+    s = Settings(
+        _env_file=None,
+        service_api_keys=f"{DEMO_REEL_PRODUCER_IDENTITY}:{DEMO_REEL_HASH}",
+        demo_reel_producer_api_key_hash=DEMO_REEL_HASH,
+    )
+    assert s.service_key_hashes == {DEMO_REEL_HASH: DEMO_REEL_PRODUCER_IDENTITY}
 
 
 def test_malformed_key_configuration_fails_at_startup():

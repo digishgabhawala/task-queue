@@ -122,6 +122,9 @@ Machine authentication uses hashed `SERVICE_API_KEYS` (producer apps) and
 `WORKER_API_KEYS` (workers). `MACHINE_AUTH_REQUIRED=false` exists only for a
 coordinated rollout; hosted deployments should switch it to `true` after all
 clients have their raw keys.
+Demo Reel can be added without inspecting or rewriting `SERVICE_API_KEYS` by
+setting the server-only `DEMO_REEL_PRODUCER_API_KEY_HASH`; see
+[`docs/authentication.md`](docs/authentication.md#additive-demo-reel-rollout).
 
 ## Deploying schema changes
 

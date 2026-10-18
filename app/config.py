@@ -7,6 +7,8 @@ import re
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEMO_REEL_PRODUCER_IDENTITY = "demo-reel"
+
 
 class Settings(BaseSettings):
     # Local default matches `supabase start`'s well-known local Postgres port/
@@ -37,6 +39,10 @@ class Settings(BaseSettings):
     # are configured, so the raw key lives solely with the app. Remove an
     # entry to revoke that app.
     service_api_keys: str = ""
+    # Additive, server-only credential for Demo Reel. Keeping this hash in a
+    # separate variable lets it be rolled out without reading or rewriting
+    # the existing SERVICE_API_KEYS secret mapping.
+    demo_reel_producer_api_key_hash: str = ""
     # Separate worker credentials prevent a worker key from submitting tasks
     # or reading producer results. Use one named hash per machine/session.
     worker_api_keys: str = ""
@@ -63,7 +69,12 @@ class Settings(BaseSettings):
     @property
     def service_key_hashes(self) -> dict[str, str]:
         """Producer keys as {sha256 hex: service name}."""
-        return self._named_key_hashes(self.service_api_keys)
+        hashes = self._named_key_hashes(self.service_api_keys)
+        if self.demo_reel_producer_api_key_hash:
+            hashes[self.demo_reel_producer_api_key_hash.lower()] = (
+                DEMO_REEL_PRODUCER_IDENTITY
+            )
+        return hashes
 
     @property
     def worker_key_hashes(self) -> dict[str, str]:
@@ -90,6 +101,30 @@ class Settings(BaseSettings):
                 if not name.strip() or not re.fullmatch(r"[0-9a-fA-F]{64}", digest.strip()):
                     raise ValueError(
                         f"{setting_name} entries must be name:<sha256 hex of the key>"
+                    )
+        demo_reel_hash = self.demo_reel_producer_api_key_hash.strip().lower()
+        if self.demo_reel_producer_api_key_hash and not re.fullmatch(
+            r"[0-9a-f]{64}", demo_reel_hash
+        ):
+            raise ValueError(
+                "DEMO_REEL_PRODUCER_API_KEY_HASH must be a SHA-256 hex digest"
+            )
+        self.demo_reel_producer_api_key_hash = demo_reel_hash
+        if demo_reel_hash:
+            for entry in filter(
+                None, (e.strip() for e in self.service_api_keys.split(","))
+            ):
+                name, _, digest = entry.partition(":")
+                name, digest = name.strip(), digest.strip().lower()
+                if digest == demo_reel_hash and name != DEMO_REEL_PRODUCER_IDENTITY:
+                    raise ValueError(
+                        "DEMO_REEL_PRODUCER_API_KEY_HASH conflicts with a different "
+                        "SERVICE_API_KEYS identity"
+                    )
+                if name == DEMO_REEL_PRODUCER_IDENTITY and digest != demo_reel_hash:
+                    raise ValueError(
+                        f"SERVICE_API_KEYS identity {DEMO_REEL_PRODUCER_IDENTITY!r} "
+                        "conflicts with DEMO_REEL_PRODUCER_API_KEY_HASH"
                     )
         if self.machine_auth_required and not self.service_key_hashes:
             raise ValueError("SERVICE_API_KEYS is required when MACHINE_AUTH_REQUIRED=true")
