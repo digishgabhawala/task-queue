@@ -63,6 +63,7 @@ from python_client import TaskQueueClient
 
 from workers import memory
 from workers.comfyui import ComfyUISupervisor
+from workers.deadline import raise_if_expired
 
 # This worker runs as a standalone script, so the FastAPI application's
 # pydantic-settings loader is never imported. Load the repository-local .env
@@ -534,6 +535,9 @@ def handle_task(client: TaskQueueClient, task: dict,
                 heartbeat: WorkerHeartbeat | None = None,
                 supervisor: ComfyUISupervisor | None = None) -> dict:
     payload = task["payload"]
+    # Only queue wait is bounded. Once this check passes, a long render runs
+    # to completion even if its original deadline passes meanwhile.
+    raise_if_expired(payload)
     character_id = payload["character_id"]
 
     if heartbeat and payload.get("hero_image_url"):
@@ -567,6 +571,7 @@ def handle_hero_candidate_task(
         heartbeat: WorkerHeartbeat | None = None,
         supervisor: ComfyUISupervisor | None = None) -> dict:
     payload = task["payload"]
+    raise_if_expired(payload)
     card = payload.get("character_card")
     if not isinstance(card, dict) or not isinstance(card.get("character_id"), str):
         raise TypeError("hero candidate requires a character_card with character_id")

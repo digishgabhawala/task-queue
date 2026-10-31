@@ -1,5 +1,6 @@
 import io
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -267,6 +268,7 @@ def _fake_forge2(monkeypatch, script):
 
     import workers.image_worker as worker
 
+    monkeypatch.setattr(worker, "CHARACTER_FORGE_V2_PATH", Path.cwd())
     monkeypatch.setattr(worker, "_build_real_command",
                         lambda *args: [sys.executable, "-c", script, "out.png"])
     return worker
@@ -412,6 +414,22 @@ HERO_TASK = {"id": "h1", "claim_token": "c", "payload": {
     "seed": 1701,
     "profile": "full",
 }}
+
+
+@pytest.mark.parametrize("handler,task", [
+    ("handle_task", TASK),
+    ("handle_hero_candidate_task", HERO_TASK),
+])
+def test_expired_image_task_fails_before_render_or_upload(monkeypatch, handler, task):
+    import workers.image_worker as worker
+
+    monkeypatch.setattr(worker, "MOCK_MODE", True)
+    monkeypatch.setattr(worker, "_run_mock", lambda character_id: pytest.fail("rendered"))
+    expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    task = {**task, "payload": {**task["payload"], "deadline_at": expired}}
+
+    with pytest.raises(RuntimeError, match=r"^expired:"):
+        getattr(worker, handler)(UploadClient(), task)
 
 
 def _real_mode(monkeypatch, run_real=None, shortfall=None):
@@ -617,6 +635,7 @@ def _fake_hero_forge2(monkeypatch, script):
 
     import workers.image_worker as worker
 
+    monkeypatch.setattr(worker, "CHARACTER_FORGE_V2_PATH", Path.cwd())
     monkeypatch.setattr(worker, "_build_hero_candidate_command",
                         lambda *args: [sys.executable, "-c", script])
     return worker

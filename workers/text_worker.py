@@ -11,27 +11,15 @@ Failure prefixes: "expired:" (producer stopped waiting -- never run),
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-
-def _deadline_passed(deadline_at: str | None) -> bool:
-    if not deadline_at:
-        return False
-    deadline = datetime.fromisoformat(deadline_at.replace("Z", "+00:00"))
-    if deadline.tzinfo is None:
-        deadline = deadline.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) > deadline
+from workers.deadline import raise_if_expired
 
 
 def handle_text_task(task: dict, heartbeat, ollama, supervisor) -> dict:
     payload = task["payload"]
     if not payload.get("messages"):
         raise ValueError("text_generation payload needs non-empty messages")
-    if _deadline_passed(payload.get("deadline_at")):
-        # The producer has already given up; running it would only burn
-        # GPU time (possibly an hour late, behind a render).
-        raise RuntimeError(
-            f"expired: deadline {payload['deadline_at']} passed before a worker was free")
+    # The producer has already given up; running it would only burn GPU time.
+    raise_if_expired(payload)
     if supervisor is not None and supervisor.managed:
         # Ollama and a loaded ComfyUI can't share the 24 GB Mac; free ours.
         supervisor.stop()
