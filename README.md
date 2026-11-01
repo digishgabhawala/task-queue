@@ -138,6 +138,18 @@ them reaches Vercel (`supabase db push`, then push/merge). Deploying first
 makes every `workers` query fail until the column exists, so all live
 workers get 500s on register/heartbeat.
 
+**Never push migrations through the transaction pooler (port 6543)**, which
+is what `DATABASE_URL` in `.env` uses. `supabase db push` runs a
+session-level `SET search_path = ''`, and in transaction mode that setting
+stays on the pooled server connection, so every unqualified query from this
+app then fails with `relation "tasks" does not exist` (production outage on
+2026-11-01). Use the session pooler (same host, port 5432) or the direct
+connection. If it happens anyway, reconnect through 6543 until you land on a
+connection whose `show search_path` is `""`, and run `reset search_path` there.
+
+Pushing `main` also deploys to production: the Vercel project is connected to
+GitHub.
+
 Database security tests require the local Supabase stack and run with:
 
 ```bash
