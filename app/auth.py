@@ -150,6 +150,13 @@ async def require_producer(api_key: str | None = Depends(_service_key)) -> AuthU
     return _require_machine_key("producer", api_key, settings.service_key_hashes)
 
 
+async def require_producer_strict(api_key: str | None = Depends(_service_key)) -> AuthUser:
+    """Require a producer key even while rollout enforcement is disabled."""
+    if not api_key:
+        raise HTTPException(401, "API key required")
+    return _require_machine_key("producer", api_key, settings.service_key_hashes)
+
+
 def _user_worker_key(db: Session, raw_key: str) -> worker_key_service.KeyOwner | None:
     digest = worker_key_service.hash_key(raw_key)
     now = _now()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
@@ -13,6 +14,7 @@ from ..auth import (
     require_admin_or_service,
     require_approved_user,
     require_producer,
+    require_producer_strict,
     require_worker,
 )
 from ..db import get_db
@@ -31,6 +33,7 @@ from ..services import worker_key_service as wksvc
 from ..services import worker_service as wsvc
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _serialize_task(task: Task) -> dict:
@@ -256,6 +259,20 @@ def get_artifact(
         return _serialize_artifact(asvc.get_artifact(db, artifact_id))
     except asvc.ArtifactServiceError as e:
         raise HTTPException(404, str(e))
+
+
+@router.delete("/artifacts/{artifact_id}", status_code=204)
+def delete_artifact(
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    producer: AuthUser = Depends(require_producer_strict),
+):
+    try:
+        asvc.delete_artifact_files(db, artifact_id)
+    except asvc.ArtifactServiceError as e:
+        raise HTTPException(404, str(e))
+    logger.info("artifact %s deleted by %s", artifact_id, producer.id)
+    return Response(status_code=204)
 
 
 def _serialize_worker_key(key: WorkerKey) -> dict:

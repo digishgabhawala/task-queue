@@ -45,7 +45,10 @@ or care which.
   results (images) get uploaded to `POST /artifacts` first, returning an id;
   `POST /tasks/{id}/complete` then just references that id in its (still
   always-JSON) `result`. Keeps task completion uniform regardless of
-  whether a given task type produces text or binary output.
+  whether a given task type produces text or binary output. Producers can
+  permanently remove an artifact with `DELETE /artifacts/{id}`; a valid
+  producer key is always required, even during an authentication rollout.
+  The endpoint returns 204 when the artifact is deleted or already gone.
 - **Workers register and heartbeat through the hosted queue.** A worker
   registers its stable identity and capabilities when it starts, then sends
   a heartbeat once per minute. The admin API/UI considers it offline after
@@ -121,7 +124,9 @@ hosted deployment enables it only after the administrator user exists and
 Machine authentication uses hashed `SERVICE_API_KEYS` (producer apps) and
 `WORKER_API_KEYS` (workers). `MACHINE_AUTH_REQUIRED=false` exists only for a
 coordinated rollout; hosted deployments should switch it to `true` after all
-clients have their raw keys.
+clients have their raw keys. Artifact deletion is deliberately not tenant
+scoped: any valid producer key can delete any artifact. This is an accepted
+risk while all producers are trusted first-party applications.
 Demo Reel can be added without inspecting or rewriting `SERVICE_API_KEYS` by
 setting the server-only `DEMO_REEL_PRODUCER_API_KEY_HASH`; see
 [`docs/authentication.md`](docs/authentication.md#additive-demo-reel-rollout).
