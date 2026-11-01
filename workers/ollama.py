@@ -17,6 +17,8 @@ from collections.abc import Callable
 
 import httpx
 
+from workers.log import log
+
 
 def _norm(name: str) -> str:
     """Ollama lists an untagged model as `<name>:latest`."""
@@ -107,16 +109,16 @@ class OllamaManager:
             try:
                 self._http.post(f"{self.url}/api/generate",
                                 json={"model": model, "keep_alive": 0}, timeout=30)
-                print(f"unloaded Ollama model {model}")
+                log(f"unloaded Ollama model {model}")
                 return True
             except httpx.HTTPError as e:
-                print(f"could not unload Ollama model {model}: {e}")
+                log(f"could not unload Ollama model {model}: {e}")
                 return False
 
     def maybe_unload_idle(self) -> bool:
         if self._owned is None or self._clock() - self._last_used < self.idle_seconds:
             return False
-        print(f"Ollama idle for {self.idle_seconds:g}s -- unloading {self._owned}")
+        log(f"Ollama idle for {self.idle_seconds:g}s -- unloading {self._owned}")
         self.unload()
         return True
 

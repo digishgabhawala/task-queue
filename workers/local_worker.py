@@ -29,6 +29,8 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # script use -> workers.*
 from workers import image_worker, memory
+from workers.deadline import raise_if_expired
+from workers.log import log
 from workers.ollama import OllamaManager
 from workers.text_worker import handle_text_task
 
@@ -77,7 +79,7 @@ def claim_next_task(client, worker_id: str, task_types: list[str]) -> ClaimAttem
     try:
         return ClaimAttempt(client.claim_next(task_types, worker_id), reachable=True)
     except httpx.HTTPError as e:
-        print(f"claim failed, retrying next poll: {e!r}")
+        log(f"claim failed, retrying next poll: {e!r}")
         return ClaimAttempt(None, reachable=False)
 
 
@@ -103,19 +105,19 @@ def next_poll_delay(attempt: ClaimAttempt, last_task_done_at: float | None = Non
 def report_result(client, task: dict, result: dict) -> None:
     try:
         client.complete_task(task["id"], task["claim_token"], result)
-        print(f"completed {task['task_type']} {task['id']}")
+        log(f"completed {task['task_type']} {task['id']}")
     except httpx.HTTPError as e:
         # 409 = lease expired and someone else took over; network errors =
         # the queue is unreachable. Either way the worker keeps going; an
         # unreported task is reclaimed once its lease expires.
-        print(f"could not report completion for {task['id']}: {e!r}")
+        log(f"could not report completion for {task['id']}: {e!r}")
 
 
 def report_failure(client, task: dict, error: Exception) -> None:
     try:
         client.fail_task(task["id"], task["claim_token"], str(error))
     except httpx.HTTPError as e:
-        print(f"could not report failure for {task['id']}: {e!r}")
+        log(f"could not report failure for {task['id']}: {e!r}")
 
 
 def wait_for_memory_release(profile: str, timeout: float, poll: float = 2.0) -> None:
@@ -135,6 +137,7 @@ def run_task(client, task: dict, heartbeat, supervisor, ollama) -> dict:
     if task_type == TEXT:
         return handle_text_task(task, heartbeat, ollama, supervisor)
     if task_type in VISUAL:
+        raise_if_expired(task["payload"])
         # Only a model this worker loaded is unloaded -- renders need the memory.
         if ollama is not None and ollama.unload():
             if heartbeat:
@@ -189,10 +192,10 @@ def main() -> None:
         sys.exit(f"local_worker: {e}")
     # The operator decides; just warn if this machine looks unable to do it.
     if TEXT in task_types and not OllamaManager(OLLAMA_URL, OLLAMA_MODEL).available():
-        print(f"WARNING: text_generation configured but Ollama is not answering at {OLLAMA_URL}")
+        log(f"WARNING: text_generation configured but Ollama is not answering at {OLLAMA_URL}")
     if any(task_type in VISUAL for task_type in task_types) and not image_available():
-        print("WARNING: visual generation configured but character-forge-v2/ComfyUI launcher "
-              "not found")
+        log("WARNING: visual generation configured but character-forge-v2/ComfyUI launcher "
+            "not found")
 
     has_visual_tasks = any(task_type in VISUAL for task_type in task_types)
     supervisor = image_worker.build_supervisor() if has_visual_tasks else None
@@ -217,9 +220,9 @@ def main() -> None:
     heartbeat = image_worker.WorkerHeartbeat(
         client, details=lambda: worker_details(supervisor, ollama), capabilities=capabilities)
     start_heartbeat_or_exit(heartbeat, image_worker.WORKER_ID)
-    print(f"local_worker starting -- worker_id={image_worker.WORKER_ID} "
-          f"task_types={task_types} mock_images={image_worker.MOCK_MODE} "
-          f"queue={image_worker.TASK_QUEUE_URL}")
+    log(f"local_worker starting -- worker_id={image_worker.WORKER_ID} "
+        f"task_types={task_types} mock_images={image_worker.MOCK_MODE} "
+        f"queue={image_worker.TASK_QUEUE_URL}")
 
     last_task_done_at: float | None = None  # time.monotonic(), for the cool-off
     while True:
@@ -233,7 +236,7 @@ def main() -> None:
             time.sleep(next_poll_delay(attempt, last_task_done_at))
             continue
 
-        print(f"claimed {task['task_type']} {task['id']}")
+        log(f"claimed {task['task_type']} {task['id']}")
         heartbeat.update(state="busy", task=task, stage="preparing",
                          message=f"Preparing {task['task_type'].replace('_', ' ')}")
 
@@ -243,7 +246,7 @@ def main() -> None:
         try:
             result = run_task(client, task, heartbeat, supervisor, ollama)
         except Exception as e:
-            print(f"work failed for {task['id']}: {e}")
+            log(f"work failed for {task['id']}: {e}")
             report_failure(client, task, e)
         else:
             report_result(client, task, result)

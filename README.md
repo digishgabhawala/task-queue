@@ -317,8 +317,8 @@ at or below 60 seconds with the current two-minute offline threshold.
   key (separate from producer keys and human sessions).
 - [ ] Resume the [Future MVP UI backlog](docs/future-ui-mvp.md) after login,
   authorization, and user management are available.
-- [ ] Define retention or manual cleanup for historical worker registrations;
-  disappeared workers currently remain visible as offline history.
+- [x] Retain historical worker registrations for 30 days; an hourly pg_cron
+  cleanup deletes registrations whose last heartbeat is older.
 - [x] Add automated FastAPI route tests for registration, heartbeat, worker
   listing, and the admin page.
 - [x] Rerun the Postgres/Storage suite against local Supabase (now 40 tests).

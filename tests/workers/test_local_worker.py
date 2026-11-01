@@ -75,8 +75,30 @@ def test_image_task_unloads_worker_model_first(monkeypatch):
     ollama, order = FakeOllama(), []
     monkeypatch.setattr(lw.image_worker, "handle_task",
                         lambda client, task, hb, sup: order.append(ollama.unloaded) or {"img": 1})
-    assert lw.run_task(None, {"id": "i", "task_type": IMAGE}, None, None, ollama) == {"img": 1}
+    task = {"id": "i", "task_type": IMAGE, "payload": {}}
+    assert lw.run_task(None, task, None, None, ollama) == {"img": 1}
     assert order == [1]  # unloaded before rendering
+
+
+def test_expired_image_task_does_not_unload_worker_model(monkeypatch):
+    ollama = FakeOllama()
+    monkeypatch.setattr(
+        lw.image_worker, "handle_task",
+        lambda client, task, hb, sup: pytest.fail("expired task reached image handler"),
+    )
+    task = {
+        "id": "i",
+        "task_type": IMAGE,
+        "payload": {"deadline_at": "2000-01-01T00:00:00Z"},
+    }
+
+    with pytest.raises(RuntimeError) as exc:
+        lw.run_task(None, task, None, None, ollama)
+
+    assert str(exc.value) == (
+        "expired: deadline 2000-01-01T00:00:00Z passed before a worker was free"
+    )
+    assert ollama.unloaded == 0
 
 
 def test_hero_candidate_task_unloads_model_and_dispatches_to_hero_handler(monkeypatch):

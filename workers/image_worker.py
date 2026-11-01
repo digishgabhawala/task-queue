@@ -64,6 +64,7 @@ from python_client import TaskQueueClient
 from workers import memory
 from workers.comfyui import ComfyUISupervisor
 from workers.deadline import raise_if_expired
+from workers.log import log
 
 # This worker runs as a standalone script, so the FastAPI application's
 # pydantic-settings loader is never imported. Load the repository-local .env
@@ -337,7 +338,7 @@ class WorkerHeartbeat:
                 snapshot["details"] = self._details()
             except Exception as exc:
                 # Status reporting must never stop the heartbeat itself.
-                print(f"worker details unavailable: {exc}")
+                log(f"worker details unavailable: {exc}")
         self.client.heartbeat(WORKER_ID, WORKER_SESSION_ID, **snapshot)
 
     def _loop(self) -> None:
@@ -346,7 +347,7 @@ class WorkerHeartbeat:
                 self._send()
             except Exception as exc:
                 # A temporary hosted-queue outage should not kill a render.
-                print(f"worker heartbeat failed: {exc}")
+                log(f"worker heartbeat failed: {exc}")
             self._wake.wait(HEARTBEAT_SECONDS)
             self._wake.clear()
 
@@ -461,7 +462,7 @@ def _render_real(task: dict, payload: dict, heartbeat: WorkerHeartbeat | None,
         # Our own idle ComfyUI may be what holds the memory (models stay
         # loaded after a render). The worker may free it -- a user-started
         # ComfyUI is never touched -- then measure again.
-        print("memory short with worker-owned ComfyUI loaded -- stopping it and re-checking")
+        log("memory short with worker-owned ComfyUI loaded -- stopping it and re-checking")
         supervisor.stop()
         shortfall = memory.memory_shortfall(profile)
     if shortfall:
@@ -501,7 +502,7 @@ def _render_hero_candidate_real(
     profile = payload.get("profile", "full")
     shortfall = memory.memory_shortfall(profile)
     if shortfall and supervisor is not None and supervisor.managed:
-        print("memory short with worker-owned ComfyUI loaded -- stopping it and re-checking")
+        log("memory short with worker-owned ComfyUI loaded -- stopping it and re-checking")
         supervisor.stop()
         shortfall = memory.memory_shortfall(profile)
     if shortfall:

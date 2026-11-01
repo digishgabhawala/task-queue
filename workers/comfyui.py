@@ -28,6 +28,8 @@ from pathlib import Path
 
 import httpx
 
+from workers.log import log
+
 
 class ComfyUIUnavailable(RuntimeError):
     """ComfyUI could not be reached or started; message starts with comfyui_unavailable:."""
@@ -139,7 +141,7 @@ class ComfyUISupervisor:
         if proc is None:
             self.pid_path.unlink(missing_ok=True)  # stale
             return
-        print(f"adopted ComfyUI pid {pid} left by a previous worker")
+        log(f"adopted ComfyUI pid {pid} left by a previous worker")
         self._proc = proc
 
     def ensure_running(self) -> None:
@@ -179,7 +181,7 @@ class ComfyUISupervisor:
         try:
             self.pid_path.write_text(str(self._proc.pid))
         except OSError as exc:
-            print(f"could not record ComfyUI pid: {exc}")
+            log(f"could not record ComfyUI pid: {exc}")
         deadline = self._clock() + self.start_timeout
         while self._clock() < deadline:
             if not self._child_alive():
@@ -215,7 +217,7 @@ class ComfyUISupervisor:
                 proc.wait(timeout=20)
         except (subprocess.TimeoutExpired, OSError) as exc:
             # Also runs from atexit: log, never raise during shutdown.
-            print(f"ComfyUI pid {getattr(proc, 'pid', '?')} did not exit cleanly: {exc}")
+            log(f"ComfyUI pid {getattr(proc, 'pid', '?')} did not exit cleanly: {exc}")
 
     def stop(self) -> None:
         """Stop a managed ComfyUI; a user-started one is left alone."""
@@ -255,7 +257,7 @@ class ComfyUISupervisor:
             if (self._proc is None or self._busy
                     or self._clock() - self._last_used < self.idle_seconds):
                 return False
-            print(f"ComfyUI idle for {self.idle_seconds:g}s -- stopping it to free memory")
+            log(f"ComfyUI idle for {self.idle_seconds:g}s -- stopping it to free memory")
             self.stop()
             return True
 

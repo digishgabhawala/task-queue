@@ -16,6 +16,8 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
+from workers.log import log
+
 GIB = 1024 ** 3
 _DEFAULT_REQUIRED_GB = {"full": 14.0, "lightning": 0.0}
 
@@ -110,7 +112,7 @@ def required_gb(profile: str) -> float:
     try:
         return float(env)
     except ValueError:
-        print(f"ignoring non-numeric MEMORY_REQUIRED_{profile.upper()}_GB={env!r}")
+        log(f"ignoring non-numeric MEMORY_REQUIRED_{profile.upper()}_GB={env!r}")
         return default
 
 
@@ -126,7 +128,7 @@ def memory_shortfall(profile: str) -> str | None:
     try:
         available = available_memory_bytes() / GIB
     except Exception as exc:
-        print(f"memory check skipped: {exc}")
+        log(f"memory check skipped: {exc}")
         return None
     if available >= needed:
         return None
