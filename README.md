@@ -289,6 +289,9 @@ at or below 60 seconds with the current two-minute offline threshold.
 
 ## Implementation TODO
 
+> **MVP closed on 2026-11-01.** Open items below are deliberate deferrals, each with the trigger that would bring it back: see [STATUS.md](https://github.com/digishgabhawala/ai-bharatiya-web/blob/main/docs/STATUS.md).
+
+
 - [x] Persist stable worker registrations and per-process session IDs.
 - [x] Send one-minute worker heartbeats and derive offline status after two
   minutes without one.
